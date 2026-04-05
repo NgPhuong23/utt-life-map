@@ -474,6 +474,8 @@ function PlacePopup({ marker, onEdit, onDelete }) {
 }
 
 export default function App() {
+  console.log("TEST PUSH");
+  
   const [markers, setMarkers] = useState(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
