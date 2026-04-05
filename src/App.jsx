@@ -10,7 +10,17 @@ import {
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
-import { collection, doc, onSnapshot, updateDoc } from "firebase/firestore";
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  updateDoc,
+} from "firebase/firestore";
 import { db } from "./firebase";
 import { useAuthCtx } from "./context/AuthContext";
 import AuthModal from "./components/AuthModal";
@@ -24,8 +34,6 @@ L.Icon.Default.mergeOptions({
   iconUrl: "https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png",
   shadowUrl: "https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png",
 });
-
-const STORAGE_KEY = "utt_life_map_markers";
 
 const defaultCenter = [21.29254772834021, 105.58421695202658];
 const radiusInMeters = 6000;
@@ -112,23 +120,6 @@ function getRatingLabel(rating) {
 
 function renderStars(value) {
   return "★".repeat(value) + "☆".repeat(5 - value);
-}
-
-function sanitizeMarkers(raw) {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((m) => ({
-      id: m.id ?? Date.now() + Math.random(),
-      name: typeof m.name === "string" ? m.name : "Địa điểm",
-      note: typeof m.note === "string" ? m.note : "",
-      lat: Number(m.lat),
-      lng: Number(m.lng),
-      rating: Number(m.rating) || 0,
-      category: typeof m.category === "string" ? m.category : "khac",
-      media: Array.isArray(m.media) ? m.media : [],
-      createdAt: m.createdAt || new Date().toISOString(),
-    }))
-    .filter((m) => Number.isFinite(m.lat) && Number.isFinite(m.lng));
 }
 
 function createPlaceIcon(place, isActive = false) {
@@ -236,6 +227,7 @@ function MapClickHandler({ onMapPointClick }) {
       onMapPointClick(e.latlng.lat, e.latlng.lng);
     },
   });
+
   return null;
 }
 
@@ -442,6 +434,7 @@ function PlacePopup({ marker, onEdit, onDelete, canEditMap }) {
           {Number(marker.lng).toFixed(6)}
         </div>
         <div>Thêm lúc: {formatDateTime(marker.createdAt)}</div>
+        {marker.createdByName && <div>Người thêm: {marker.createdByName}</div>}
       </div>
 
       {canEditMap && (
@@ -500,16 +493,7 @@ export default function App() {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [activeTab, setActiveTab] = useState("places");
   const [members, setMembers] = useState([]);
-
-  const [markers, setMarkers] = useState(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (!saved) return [];
-      return sanitizeMarkers(JSON.parse(saved));
-    } catch {
-      return [];
-    }
-  });
+  const [markers, setMarkers] = useState([]);
 
   const [draft, setDraft] = useState(emptyDraft);
   const [message, setMessage] = useState("");
@@ -528,17 +512,23 @@ export default function App() {
   const mapRef = useRef(null);
   const toastTimeoutRef = useRef(null);
 
+  const showMessage = (text) => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+    }
+    setMessage(text);
+    toastTimeoutRef.current = setTimeout(() => setMessage(""), 2400);
+  };
+
   useEffect(() => {
     document.title = "UTT Life Map";
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(markers));
-  }, [markers]);
-
-  useEffect(() => {
     return () => {
-      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+      }
     };
   }, []);
 
@@ -572,6 +562,46 @@ export default function App() {
 
     return () => unsub();
   }, [isAdmin]);
+
+  useEffect(() => {
+    const q = query(collection(db, "markers"), orderBy("createdAt", "desc"));
+
+    const unsub = onSnapshot(
+      q,
+      (snapshot) => {
+        const list = snapshot.docs
+          .map((item) => {
+            const data = item.data();
+
+            return {
+              id: item.id,
+              name: typeof data.name === "string" ? data.name : "Địa điểm",
+              note: typeof data.note === "string" ? data.note : "",
+              lat: Number(data.lat),
+              lng: Number(data.lng),
+              rating: Number(data.rating) || 0,
+              category:
+                typeof data.category === "string" ? data.category : "khac",
+              media: Array.isArray(data.media) ? data.media : [],
+              createdAt: data.createdAt?.toDate
+                ? data.createdAt.toDate().toISOString()
+                : data.createdAt || new Date().toISOString(),
+              createdBy: data.createdBy || null,
+              createdByName: data.createdByName || "",
+            };
+          })
+          .filter((m) => Number.isFinite(m.lat) && Number.isFinite(m.lng));
+
+        setMarkers(list);
+      },
+      (error) => {
+        console.error("Markers snapshot error:", error);
+        showMessage("❌ Không tải được dữ liệu địa điểm");
+      }
+    );
+
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     const styleEl = document.createElement("style");
@@ -649,8 +679,10 @@ export default function App() {
         m.name.toLowerCase().includes(keyword) ||
         (m.note && m.note.toLowerCase().includes(keyword));
 
-      const matchCat = categoryFilter === "all" || m.category === categoryFilter;
-      return matchSearch && matchCat;
+      const matchCategory =
+        categoryFilter === "all" || m.category === categoryFilter;
+
+      return matchSearch && matchCategory;
     });
 
     if (sortBy === "rating") {
@@ -680,12 +712,6 @@ export default function App() {
     };
   }, [markers]);
 
-  const showMessage = (text) => {
-    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
-    setMessage(text);
-    toastTimeoutRef.current = setTimeout(() => setMessage(""), 2400);
-  };
-
   const requireEditPermission = () => {
     if (!isLoggedIn) {
       setShowAuthModal(true);
@@ -707,7 +733,10 @@ export default function App() {
     setShowConfirm(false);
     setShowForm(false);
     setIsEditing(false);
-    if (mediaInputRef.current) mediaInputRef.current.value = "";
+
+    if (mediaInputRef.current) {
+      mediaInputRef.current.value = "";
+    }
   };
 
   const openCreateFormAtPoint = () => {
@@ -778,7 +807,11 @@ export default function App() {
         ...prev,
         media: [...(prev.media || []), ...uploadedMedia],
       }));
-      if (mediaInputRef.current) mediaInputRef.current.value = "";
+
+      if (mediaInputRef.current) {
+        mediaInputRef.current.value = "";
+      }
+
       showMessage(`✅ Đã thêm ${uploadedMedia.length} media`);
     });
   };
@@ -790,7 +823,7 @@ export default function App() {
     }));
   };
 
-  const saveMarker = () => {
+  const saveMarker = async () => {
     if (!requireEditPermission()) return;
 
     if (!draft.name.trim()) {
@@ -814,42 +847,43 @@ export default function App() {
       return;
     }
 
-    if (isEditing) {
-      setMarkers((prev) =>
-        prev.map((m) =>
-          m.id === draft.id
-            ? {
-                ...m,
-                name: draft.name.trim(),
-                note: draft.note.trim(),
-                rating: draft.rating,
-                category: draft.category,
-                media: draft.media || [],
-              }
-            : m
-        )
-      );
-      setSelectedMarkerId(draft.id);
-      showMessage("✅ Đã cập nhật địa điểm");
-    } else {
-      const newMarker = {
-        id: Date.now(),
-        name: draft.name.trim(),
-        note: draft.note.trim(),
-        lat,
-        lng,
-        rating: draft.rating,
-        category: draft.category,
-        media: draft.media || [],
-        createdAt: new Date().toISOString(),
-      };
+    try {
+      if (isEditing) {
+        await updateDoc(doc(db, "markers", String(draft.id)), {
+          name: draft.name.trim(),
+          note: draft.note.trim(),
+          lat,
+          lng,
+          rating: draft.rating,
+          category: draft.category,
+          media: draft.media || [],
+        });
 
-      setMarkers((prev) => [newMarker, ...prev]);
-      setSelectedMarkerId(newMarker.id);
-      showMessage("✅ Đã thêm địa điểm thành công");
+        setSelectedMarkerId(draft.id);
+        showMessage("✅ Đã cập nhật địa điểm");
+      } else {
+        const docRef = await addDoc(collection(db, "markers"), {
+          name: draft.name.trim(),
+          note: draft.note.trim(),
+          lat,
+          lng,
+          rating: draft.rating,
+          category: draft.category,
+          media: draft.media || [],
+          createdAt: serverTimestamp(),
+          createdBy: firebaseUser?.uid || null,
+          createdByName: profile?.username || firebaseUser?.email || "Ẩn danh",
+        });
+
+        setSelectedMarkerId(docRef.id);
+        showMessage("✅ Đã thêm địa điểm thành công");
+      }
+
+      resetDraft();
+    } catch (error) {
+      console.error("Save marker error:", error);
+      showMessage("❌ Không lưu được địa điểm");
     }
-
-    resetDraft();
   };
 
   const startEdit = (marker) => {
@@ -877,13 +911,22 @@ export default function App() {
     }
   };
 
-  const deleteMarker = (id) => {
+  const deleteMarker = async (id) => {
     if (!requireEditPermission()) return;
     if (!window.confirm("Xóa địa điểm này?")) return;
 
-    setMarkers((prev) => prev.filter((m) => m.id !== id));
-    if (selectedMarkerId === id) setSelectedMarkerId(null);
-    showMessage("🗑️ Đã xóa địa điểm");
+    try {
+      await deleteDoc(doc(db, "markers", String(id)));
+
+      if (selectedMarkerId === id) {
+        setSelectedMarkerId(null);
+      }
+
+      showMessage("🗑️ Đã xóa địa điểm");
+    } catch (error) {
+      console.error("Delete marker error:", error);
+      showMessage("❌ Xóa địa điểm thất bại");
+    }
   };
 
   const focusMarker = (marker) => {
@@ -906,7 +949,8 @@ export default function App() {
         role: "moderator",
       });
       showMessage("✅ Đã chuyển thành Co-Admin");
-    } catch {
+    } catch (error) {
+      console.error("Set moderator error:", error);
       showMessage("❌ Không cập nhật được quyền");
     }
   };
@@ -922,7 +966,8 @@ export default function App() {
         role: "user",
       });
       showMessage("✅ Đã hạ về User");
-    } catch {
+    } catch (error) {
+      console.error("Remove moderator error:", error);
       showMessage("❌ Không cập nhật được quyền");
     }
   };
@@ -936,9 +981,11 @@ export default function App() {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
+
         if (mapRef.current) {
           mapRef.current.flyTo([latitude, longitude], 16, { duration: 1.2 });
         }
+
         showMessage(
           `📍 Vị trí của bạn: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`
         );
@@ -1846,7 +1893,10 @@ export default function App() {
                 <select
                   value={draft.category}
                   onChange={(e) =>
-                    setDraft((p) => ({ ...p, category: e.target.value }))
+                    setDraft((prev) => ({
+                      ...prev,
+                      category: e.target.value,
+                    }))
                   }
                   style={{
                     width: "100%",
@@ -1884,7 +1934,10 @@ export default function App() {
                   placeholder="Nhập tên quán hoặc địa điểm"
                   value={draft.name}
                   onChange={(e) =>
-                    setDraft((p) => ({ ...p, name: e.target.value }))
+                    setDraft((prev) => ({
+                      ...prev,
+                      name: e.target.value,
+                    }))
                   }
                   style={{
                     width: "100%",
@@ -1916,7 +1969,10 @@ export default function App() {
                   placeholder="Mô tả thêm về địa điểm..."
                   value={draft.note}
                   onChange={(e) =>
-                    setDraft((p) => ({ ...p, note: e.target.value }))
+                    setDraft((prev) => ({
+                      ...prev,
+                      note: e.target.value,
+                    }))
                   }
                   style={{
                     width: "100%",
@@ -1932,7 +1988,12 @@ export default function App() {
 
               <StarRatingInput
                 value={draft.rating}
-                onChange={(r) => setDraft((p) => ({ ...p, rating: r }))}
+                onChange={(rating) =>
+                  setDraft((prev) => ({
+                    ...prev,
+                    rating,
+                  }))
+                }
               />
 
               <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
@@ -1998,7 +2059,8 @@ export default function App() {
                   marginBottom: 16,
                 }}
               >
-                Bạn có thể thêm nhiều ảnh hoặc video để minh họa cho địa điểm này.
+                Bạn có thể thêm nhiều ảnh hoặc video để minh họa cho địa điểm
+                này.
               </div>
 
               <label
@@ -2022,6 +2084,7 @@ export default function App() {
                   onChange={handleMediaUpload}
                   style={{ display: "none" }}
                 />
+
                 <span
                   style={{
                     background: "#16a34a",
@@ -2089,7 +2152,8 @@ export default function App() {
                   </div>
 
                   <div style={{ fontSize: 14 }}>
-                    Hãy thêm ảnh hoặc video ở cột bên phải để địa điểm sinh động hơn.
+                    Hãy thêm ảnh hoặc video ở cột bên phải để địa điểm sinh động
+                    hơn.
                   </div>
                 </div>
               )}
