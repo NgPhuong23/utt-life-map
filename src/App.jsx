@@ -10,6 +10,11 @@ import {
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
+import { collection, doc, onSnapshot, updateDoc } from "firebase/firestore";
+import { db } from "./firebase";
+import { useAuthCtx } from "./context/AuthContext";
+import AuthModal from "./components/AuthModal";
+import UsernameModal from "./components/UsernameModal";
 
 // Fix icon Leaflet mặc định
 delete L.Icon.Default.prototype._getIconUrl;
@@ -50,7 +55,10 @@ const emptyDraft = {
 };
 
 function getCategoryInfo(category) {
-  return categories.find((c) => c.value === category) || categories[categories.length - 1];
+  return (
+    categories.find((c) => c.value === category) ||
+    categories[categories.length - 1]
+  );
 }
 
 function getCategoryEmoji(category) {
@@ -320,7 +328,7 @@ function MediaPreviewItem({ item, onRemove }) {
   );
 }
 
-function PlacePopup({ marker, onEdit, onDelete }) {
+function PlacePopup({ marker, onEdit, onDelete, canEditMap }) {
   return (
     <div style={{ width: 280, color: "#0f172a" }}>
       <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
@@ -430,51 +438,69 @@ function PlacePopup({ marker, onEdit, onDelete }) {
         }}
       >
         <div>
-          Tọa độ: {Number(marker.lat).toFixed(6)}, {Number(marker.lng).toFixed(6)}
+          Tọa độ: {Number(marker.lat).toFixed(6)},{" "}
+          {Number(marker.lng).toFixed(6)}
         </div>
         <div>Thêm lúc: {formatDateTime(marker.createdAt)}</div>
       </div>
 
-      <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-        <button
-          type="button"
-          onClick={() => onEdit(marker)}
-          style={{
-            flex: 1,
-            padding: "10px 12px",
-            background: "#eab308",
-            color: "#fff",
-            border: "none",
-            borderRadius: 10,
-            cursor: "pointer",
-            fontWeight: 700,
-          }}
-        >
-          Sửa
-        </button>
-        <button
-          type="button"
-          onClick={() => onDelete(marker.id)}
-          style={{
-            flex: 1,
-            padding: "10px 12px",
-            background: "#fee2e2",
-            color: "#dc2626",
-            border: "none",
-            borderRadius: 10,
-            cursor: "pointer",
-            fontWeight: 700,
-          }}
-        >
-          Xóa
-        </button>
-      </div>
+      {canEditMap && (
+        <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+          <button
+            type="button"
+            onClick={() => onEdit(marker)}
+            style={{
+              flex: 1,
+              padding: "10px 12px",
+              background: "#eab308",
+              color: "#fff",
+              border: "none",
+              borderRadius: 10,
+              cursor: "pointer",
+              fontWeight: 700,
+            }}
+          >
+            Sửa
+          </button>
+          <button
+            type="button"
+            onClick={() => onDelete(marker.id)}
+            style={{
+              flex: 1,
+              padding: "10px 12px",
+              background: "#fee2e2",
+              color: "#dc2626",
+              border: "none",
+              borderRadius: 10,
+              cursor: "pointer",
+              fontWeight: 700,
+            }}
+          >
+            Xóa
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
 export default function App() {
-  
+  const {
+    isLoggedIn,
+    firebaseUser,
+    profile,
+    role,
+    canEditMap,
+    logout,
+    loading,
+  } = useAuthCtx();
+
+  const isAdmin = role === "admin";
+
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [activeTab, setActiveTab] = useState("places");
+  const [members, setMembers] = useState([]);
+
   const [markers, setMarkers] = useState(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -503,6 +529,10 @@ export default function App() {
   const toastTimeoutRef = useRef(null);
 
   useEffect(() => {
+    document.title = "UTT Life Map";
+  }, []);
+
+  useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(markers));
   }, [markers]);
 
@@ -511,6 +541,37 @@ export default function App() {
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!isAdmin && activeTab === "members") {
+      setActiveTab("places");
+    }
+  }, [isAdmin, activeTab]);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setMembers([]);
+      return;
+    }
+
+    const unsub = onSnapshot(collection(db, "users"), (snapshot) => {
+      const list = snapshot.docs.map((item) => ({
+        id: item.id,
+        ...item.data(),
+      }));
+
+      list.sort((a, b) =>
+        (a.username || a.email || "").localeCompare(
+          b.username || b.email || "",
+          "vi"
+        )
+      );
+
+      setMembers(list);
+    });
+
+    return () => unsub();
+  }, [isAdmin]);
 
   useEffect(() => {
     const styleEl = document.createElement("style");
@@ -625,6 +686,21 @@ export default function App() {
     toastTimeoutRef.current = setTimeout(() => setMessage(""), 2400);
   };
 
+  const requireEditPermission = () => {
+    if (!isLoggedIn) {
+      setShowAuthModal(true);
+      showMessage("❌ Hãy đăng nhập để tiếp tục");
+      return false;
+    }
+
+    if (!canEditMap) {
+      showMessage("❌ Bạn không có quyền thêm, sửa hoặc xóa địa điểm");
+      return false;
+    }
+
+    return true;
+  };
+
   const resetDraft = () => {
     setDraft(emptyDraft);
     setTempPoint(null);
@@ -635,11 +711,14 @@ export default function App() {
   };
 
   const openCreateFormAtPoint = () => {
+    if (!requireEditPermission()) return;
     setShowConfirm(false);
     setShowForm(true);
   };
 
   const handleMapPointClick = (lat, lng) => {
+    if (!requireEditPermission()) return;
+
     if (
       getDistanceInMeters(defaultCenter[0], defaultCenter[1], lat, lng) >
       radiusInMeters
@@ -712,6 +791,8 @@ export default function App() {
   };
 
   const saveMarker = () => {
+    if (!requireEditPermission()) return;
+
     if (!draft.name.trim()) {
       showMessage("❌ Vui lòng nhập tên địa điểm");
       return;
@@ -772,6 +853,8 @@ export default function App() {
   };
 
   const startEdit = (marker) => {
+    if (!requireEditPermission()) return;
+
     setDraft({
       id: marker.id,
       name: marker.name || "",
@@ -795,6 +878,7 @@ export default function App() {
   };
 
   const deleteMarker = (id) => {
+    if (!requireEditPermission()) return;
     if (!window.confirm("Xóa địa điểm này?")) return;
 
     setMarkers((prev) => prev.filter((m) => m.id !== id));
@@ -808,6 +892,38 @@ export default function App() {
 
     if (mapRef.current) {
       mapRef.current.flyTo([marker.lat, marker.lng], 16, { duration: 1.2 });
+    }
+  };
+
+  const setModerator = async (userId) => {
+    if (!isAdmin) {
+      showMessage("❌ Chỉ admin mới được quản lý thành viên");
+      return;
+    }
+
+    try {
+      await updateDoc(doc(db, "users", userId), {
+        role: "moderator",
+      });
+      showMessage("✅ Đã chuyển thành Co-Admin");
+    } catch {
+      showMessage("❌ Không cập nhật được quyền");
+    }
+  };
+
+  const removeModerator = async (userId) => {
+    if (!isAdmin) {
+      showMessage("❌ Chỉ admin mới được quản lý thành viên");
+      return;
+    }
+
+    try {
+      await updateDoc(doc(db, "users", userId), {
+        role: "user",
+      });
+      showMessage("✅ Đã hạ về User");
+    } catch {
+      showMessage("❌ Không cập nhật được quyền");
     }
   };
 
@@ -832,6 +948,24 @@ export default function App() {
     );
   };
 
+  if (loading) {
+    return (
+      <div
+        style={{
+          minHeight: "100svh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 18,
+          color: "#334155",
+          background: "#f8fafc",
+        }}
+      >
+        Đang tải UTT Life Map...
+      </div>
+    );
+  }
+
   return (
     <div
       className="utt-map-scope"
@@ -844,7 +978,7 @@ export default function App() {
       }}
     >
       <button
-        onClick={() => setShowMenu(!showMenu)}
+        onClick={() => setShowMenu((prev) => !prev)}
         style={{
           position: "absolute",
           top: 16,
@@ -885,11 +1019,55 @@ export default function App() {
         📍
       </button>
 
+      {!isLoggedIn ? (
+        <button
+          onClick={() => setShowAuthModal(true)}
+          style={{
+            position: "absolute",
+            top: 16,
+            left: 144,
+            zIndex: 2000,
+            width: 52,
+            height: 52,
+            borderRadius: 14,
+            border: "none",
+            background: "#fff",
+            boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
+            fontSize: 24,
+            cursor: "pointer",
+          }}
+          title="Đăng nhập"
+        >
+          👤
+        </button>
+      ) : (
+        <button
+          onClick={logout}
+          style={{
+            position: "absolute",
+            top: 16,
+            left: 144,
+            zIndex: 2000,
+            width: 52,
+            height: 52,
+            borderRadius: 14,
+            border: "none",
+            background: "#fff",
+            boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
+            fontSize: 24,
+            cursor: "pointer",
+          }}
+          title="Đăng xuất"
+        >
+          ↩
+        </button>
+      )}
+
       <div
         style={{
           position: "absolute",
           top: 16,
-          left: 150,
+          left: 210,
           zIndex: 1000,
           background: "rgba(255,255,255,0.98)",
           padding: "12px 20px",
@@ -925,6 +1103,10 @@ export default function App() {
           <span>📍 {totalStats.total} địa điểm</span>
           <span>⭐ {totalStats.avgRating}/5</span>
           <span>📝 {totalStats.ratedCount} địa điểm đã đánh giá</span>
+          <span>
+            👤 {isLoggedIn ? profile?.username || firebaseUser?.email : "Khách"}
+          </span>
+          <span>🛡️ {isLoggedIn ? role : "guest"}</span>
         </div>
       </div>
 
@@ -979,6 +1161,12 @@ export default function App() {
                 <div style={{ color: "#64748b", fontSize: 14 }}>
                   {filteredMarkers.length} / {markers.length} địa điểm
                 </div>
+
+                <div style={{ color: "#64748b", fontSize: 13, marginTop: 4 }}>
+                  {isLoggedIn
+                    ? `Xin chào ${profile?.username || firebaseUser?.email}`
+                    : "Bạn chưa đăng nhập"}
+                </div>
               </div>
 
               <button
@@ -1003,57 +1191,243 @@ export default function App() {
                 gap: 12,
               }}
             >
-              <input
-                type="text"
-                placeholder="🔎 Tìm kiếm địa điểm..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                style={{
-                  padding: 14,
-                  borderRadius: 14,
-                  border: "1px solid #cbd5e1",
-                  fontSize: 15,
-                }}
-              />
-
-              <div style={{ display: "flex", gap: 8 }}>
-                <select
-                  value={categoryFilter}
-                  onChange={(e) => setCategoryFilter(e.target.value)}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  onClick={() => setActiveTab("places")}
                   style={{
-                    flex: 1,
-                    padding: 14,
-                    borderRadius: 14,
-                    border: "1px solid #cbd5e1",
+                    padding: "10px 14px",
+                    borderRadius: 999,
+                    border:
+                      activeTab === "places" ? "none" : "1px solid #cbd5e1",
+                    background: activeTab === "places" ? "#2563eb" : "#fff",
+                    color: activeTab === "places" ? "#fff" : "#334155",
+                    cursor: "pointer",
+                    fontWeight: 700,
                   }}
                 >
-                  <option value="all">Tất cả loại</option>
-                  {categories.map((cat) => (
-                    <option key={cat.value} value={cat.value}>
-                      {cat.label}
-                    </option>
-                  ))}
-                </select>
+                  Địa điểm
+                </button>
 
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value)}
-                  style={{
-                    flex: 1,
-                    padding: 14,
-                    borderRadius: 14,
-                    border: "1px solid #cbd5e1",
-                  }}
-                >
-                  <option value="newest">Mới nhất</option>
-                  <option value="rating">Rating cao nhất</option>
-                  <option value="name">Tên A-Z</option>
-                </select>
+                {isAdmin && (
+                  <button
+                    onClick={() => setActiveTab("members")}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 999,
+                      border:
+                        activeTab === "members" ? "none" : "1px solid #cbd5e1",
+                      background: activeTab === "members" ? "#2563eb" : "#fff",
+                      color: activeTab === "members" ? "#fff" : "#334155",
+                      cursor: "pointer",
+                      fontWeight: 700,
+                    }}
+                  >
+                    Thành viên
+                  </button>
+                )}
               </div>
+
+              {activeTab === "places" && (
+                <>
+                  <input
+                    type="text"
+                    placeholder="🔎 Tìm kiếm địa điểm..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    style={{
+                      padding: 14,
+                      borderRadius: 14,
+                      border: "1px solid #cbd5e1",
+                      fontSize: 15,
+                    }}
+                  />
+
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <select
+                      value={categoryFilter}
+                      onChange={(e) => setCategoryFilter(e.target.value)}
+                      style={{
+                        flex: 1,
+                        padding: 14,
+                        borderRadius: 14,
+                        border: "1px solid #cbd5e1",
+                      }}
+                    >
+                      <option value="all">Tất cả loại</option>
+                      {categories.map((cat) => (
+                        <option key={cat.value} value={cat.value}>
+                          {cat.label}
+                        </option>
+                      ))}
+                    </select>
+
+                    <select
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value)}
+                      style={{
+                        flex: 1,
+                        padding: 14,
+                        borderRadius: 14,
+                        border: "1px solid #cbd5e1",
+                      }}
+                    >
+                      <option value="newest">Mới nhất</option>
+                      <option value="rating">Rating cao nhất</option>
+                      <option value="name">Tên A-Z</option>
+                    </select>
+                  </div>
+
+                  {!isLoggedIn ? (
+                    <button
+                      onClick={() => setShowAuthModal(true)}
+                      style={{
+                        padding: 12,
+                        borderRadius: 12,
+                        border: "none",
+                        background: "#2563eb",
+                        color: "#fff",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Đăng nhập / Đăng ký
+                    </button>
+                  ) : (
+                    <div
+                      style={{
+                        padding: 12,
+                        borderRadius: 12,
+                        background: "#f8fafc",
+                        border: "1px solid #e5e7eb",
+                        fontSize: 14,
+                        color: "#334155",
+                      }}
+                    >
+                      Quyền hiện tại:{" "}
+                      <strong>{canEditMap ? "Admin / Co-Admin" : "User"}</strong>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
 
             <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
-              {filteredMarkers.length === 0 ? (
+              {activeTab === "members" ? (
+                !isAdmin ? (
+                  <p
+                    style={{
+                      textAlign: "center",
+                      color: "#64748b",
+                      padding: 30,
+                    }}
+                  >
+                    Bạn không có quyền truy cập mục này
+                  </p>
+                ) : members.length === 0 ? (
+                  <p
+                    style={{
+                      textAlign: "center",
+                      color: "#64748b",
+                      padding: 30,
+                    }}
+                  >
+                    Chưa có thành viên nào
+                  </p>
+                ) : (
+                  members.map((u) => (
+                    <div
+                      key={u.id}
+                      style={{
+                        padding: 16,
+                        marginBottom: 12,
+                        border: "1px solid #e5e7eb",
+                        borderRadius: 18,
+                        background: "#fff",
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontWeight: 800,
+                          fontSize: 16,
+                          color: "#0f172a",
+                        }}
+                      >
+                        {u.username || "Chưa có username"}
+                      </div>
+
+                      <div
+                        style={{ marginTop: 4, fontSize: 13, color: "#64748b" }}
+                      >
+                        {u.email || "Không có email"}
+                      </div>
+
+                      <div
+                        style={{ marginTop: 6, fontSize: 13, color: "#475569" }}
+                      >
+                        Vai trò hiện tại: <strong>{u.role || "user"}</strong>
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop: 12,
+                          display: "flex",
+                          gap: 8,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        {u.role !== "admin" && (
+                          <>
+                            <button
+                              onClick={() => setModerator(u.id)}
+                              style={{
+                                padding: "10px 12px",
+                                background: "#2563eb",
+                                color: "#fff",
+                                border: "none",
+                                borderRadius: 10,
+                                cursor: "pointer",
+                                fontWeight: 700,
+                              }}
+                            >
+                              Cấp Co-Admin
+                            </button>
+
+                            <button
+                              onClick={() => removeModerator(u.id)}
+                              style={{
+                                padding: "10px 12px",
+                                background: "#f59e0b",
+                                color: "#fff",
+                                border: "none",
+                                borderRadius: 10,
+                                cursor: "pointer",
+                                fontWeight: 700,
+                              }}
+                            >
+                              Hạ về User
+                            </button>
+                          </>
+                        )}
+
+                        <button
+                          onClick={() => setActiveTab("places")}
+                          style={{
+                            padding: "10px 12px",
+                            background: "#e2e8f0",
+                            color: "#334155",
+                            border: "none",
+                            borderRadius: 10,
+                            cursor: "pointer",
+                            fontWeight: 700,
+                          }}
+                        >
+                          Quay lại
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )
+              ) : filteredMarkers.length === 0 ? (
                 <p
                   style={{
                     textAlign: "center",
@@ -1072,8 +1446,7 @@ export default function App() {
                       marginBottom: 12,
                       border: "1px solid #e5e7eb",
                       borderRadius: 18,
-                      background:
-                        selectedMarkerId === m.id ? "#eff6ff" : "#fff",
+                      background: selectedMarkerId === m.id ? "#eff6ff" : "#fff",
                       boxShadow:
                         selectedMarkerId === m.id
                           ? "0 6px 20px rgba(37,99,235,0.08)"
@@ -1207,53 +1580,57 @@ export default function App() {
                         Xem
                       </button>
 
-                      <button
-                        onClick={() => startEdit(m)}
-                        style={{
-                          flex: 1,
-                          padding: 10,
-                          background: "#22c55e",
-                          color: "#fff",
-                          border: "none",
-                          borderRadius: 10,
-                          cursor: "pointer",
-                          fontWeight: 700,
-                        }}
-                      >
-                        📸 Thêm media
-                      </button>
+                      {canEditMap && (
+                        <>
+                          <button
+                            onClick={() => startEdit(m)}
+                            style={{
+                              flex: 1,
+                              padding: 10,
+                              background: "#22c55e",
+                              color: "#fff",
+                              border: "none",
+                              borderRadius: 10,
+                              cursor: "pointer",
+                              fontWeight: 700,
+                            }}
+                          >
+                            📸 Thêm media
+                          </button>
 
-                      <button
-                        onClick={() => startEdit(m)}
-                        style={{
-                          flex: 1,
-                          padding: 10,
-                          background: "#eab308",
-                          color: "#fff",
-                          border: "none",
-                          borderRadius: 10,
-                          cursor: "pointer",
-                          fontWeight: 700,
-                        }}
-                      >
-                        Sửa
-                      </button>
+                          <button
+                            onClick={() => startEdit(m)}
+                            style={{
+                              flex: 1,
+                              padding: 10,
+                              background: "#eab308",
+                              color: "#fff",
+                              border: "none",
+                              borderRadius: 10,
+                              cursor: "pointer",
+                              fontWeight: 700,
+                            }}
+                          >
+                            Sửa
+                          </button>
 
-                      <button
-                        onClick={() => deleteMarker(m.id)}
-                        style={{
-                          flex: 1,
-                          padding: 10,
-                          background: "#fee2e2",
-                          color: "#ef4444",
-                          border: "none",
-                          borderRadius: 10,
-                          cursor: "pointer",
-                          fontWeight: 700,
-                        }}
-                      >
-                        Xóa
-                      </button>
+                          <button
+                            onClick={() => deleteMarker(m.id)}
+                            style={{
+                              flex: 1,
+                              padding: 10,
+                              background: "#fee2e2",
+                              color: "#ef4444",
+                              border: "none",
+                              borderRadius: 10,
+                              cursor: "pointer",
+                              fontWeight: 700,
+                            }}
+                          >
+                            Xóa
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 ))
@@ -1280,7 +1657,7 @@ export default function App() {
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             tileSize={256}
             zoomOffset={0}
-            updateWhenIdle={true}
+            updateWhenIdle
             keepBuffer={4}
           />
 
@@ -1369,6 +1746,7 @@ export default function App() {
                   marker={m}
                   onEdit={startEdit}
                   onDelete={deleteMarker}
+                  canEditMap={canEditMap}
                 />
               </Popup>
             </Marker>
@@ -1719,6 +2097,13 @@ export default function App() {
           </div>
         </div>
       )}
+
+      <AuthModal
+        open={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+      />
+
+      <UsernameModal />
 
       {message && (
         <div
