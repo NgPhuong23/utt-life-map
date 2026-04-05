@@ -495,6 +495,8 @@ export default function App() {
   const [members, setMembers] = useState([]);
   const [markers, setMarkers] = useState([]);
 
+  const displayMarkers = useMemo(() => markers, [markers]);
+
   const [draft, setDraft] = useState(emptyDraft);
   const [message, setMessage] = useState("");
   const [selectedMarkerId, setSelectedMarkerId] = useState(null);
@@ -1779,7 +1781,7 @@ export default function App() {
             </Popup>
           )}
 
-          {markers.map((m) => (
+          {displayMarkers.map((m) => (
             <Marker
               key={m.id}
               position={[m.lat, m.lng]}
