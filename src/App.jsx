@@ -1779,7 +1779,7 @@ export default function App() {
             </Popup>
           )}
 
-          {markers.map((m) => (
+          {displayMarkers.map((m) => (
             <Marker
               key={m.id}
               position={[m.lat, m.lng]}
