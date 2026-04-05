@@ -216,6 +216,7 @@ export default function App() {
   const [tempPoint, setTempPoint] = useState(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
 
   const logoInputRef = useRef(null);
 
@@ -363,11 +364,231 @@ export default function App() {
         background: "#f8fafc",
       }}
     >
-      <div
+      <button
+        onClick={() => setShowMenu((prev) => !prev)}
         style={{
           position: "absolute",
           top: 16,
           left: 16,
+          zIndex: 1200,
+          width: 52,
+          height: 52,
+          borderRadius: 14,
+          border: "none",
+          background: "#ffffff",
+          boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 26,
+          fontWeight: 700,
+          color: "#1e293b",
+        }}
+        title="Mở menu"
+      >
+        ☰
+      </button>
+
+      {showMenu && (
+        <>
+          <div
+            onClick={() => setShowMenu(false)}
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "rgba(15,23,42,0.25)",
+              zIndex: 1100,
+            }}
+          />
+
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: 360,
+              height: "100%",
+              background: "#ffffff",
+              zIndex: 1300,
+              boxShadow: "12px 0 30px rgba(0,0,0,0.18)",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div
+              style={{
+                padding: "18px 20px",
+                borderBottom: "1px solid #e5e7eb",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    fontSize: 24,
+                    fontWeight: 800,
+                    color: "#1e293b",
+                    marginBottom: 4,
+                  }}
+                >
+                  Menu
+                </div>
+                <div style={{ color: "#64748b", fontSize: 14 }}>
+                  Danh sách các mục
+                </div>
+              </div>
+
+              <button
+                onClick={() => setShowMenu(false)}
+                style={{
+                  border: "none",
+                  background: "#f1f5f9",
+                  borderRadius: 10,
+                  width: 38,
+                  height: 38,
+                  cursor: "pointer",
+                  fontSize: 20,
+                  color: "#334155",
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            <div
+              style={{
+                padding: 16,
+                borderBottom: "1px solid #e5e7eb",
+              }}
+            >
+              <div
+                style={{
+                  padding: "12px 14px",
+                  borderRadius: 12,
+                  background: "#eff6ff",
+                  color: "#1d4ed8",
+                  fontWeight: 700,
+                  border: "1px solid #bfdbfe",
+                }}
+              >
+                Danh sách địa điểm
+              </div>
+            </div>
+
+            <div
+              style={{
+                flex: 1,
+                overflow: "auto",
+                padding: 16,
+              }}
+            >
+              {markers.length === 0 && (
+                <p style={{ color: "#64748b" }}>Chưa có địa điểm nào.</p>
+              )}
+
+              {markers.map((m) => (
+                <div
+                  key={m.id}
+                  style={{
+                    border: "1px solid #e5e7eb",
+                    padding: 14,
+                    marginBottom: 12,
+                    borderRadius: 18,
+                    background: selectedMarkerId === m.id ? "#eff6ff" : "#ffffff",
+                    boxShadow: "0 8px 22px rgba(0,0,0,0.05)",
+                  }}
+                >
+                  <strong style={{ color: "#0f172a", fontSize: 17 }}>{m.name}</strong>
+
+                  {m.logo ? (
+                    <div style={{ marginTop: 8 }}>
+                      <img
+                        src={m.logo}
+                        alt={m.name}
+                        style={{
+                          width: 64,
+                          height: 64,
+                          objectFit: "cover",
+                          borderRadius: 14,
+                          border: "1px solid #ddd",
+                        }}
+                      />
+                    </div>
+                  ) : null}
+
+                  <div style={{ marginTop: 8, color: "#f59e0b", fontSize: 18 }}>
+                    {m.rating ? (
+                      renderStars(m.rating)
+                    ) : (
+                      <span style={{ color: "#888", fontSize: 14 }}>
+                        Chưa đánh giá
+                      </span>
+                    )}
+                  </div>
+
+                  {m.rating ? (
+                    <div style={{ color: "#666", fontSize: 14, marginTop: 4 }}>
+                      {m.rating}/5 - {getRatingLabel(m.rating)}
+                    </div>
+                  ) : null}
+
+                  <p style={{ marginBottom: 6, color: "#475569", lineHeight: 1.6 }}>
+                    {m.note}
+                  </p>
+
+                  <small style={{ color: "#64748b" }}>
+                    {m.lat}, {m.lng}
+                  </small>
+
+                  <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+                    <button
+                      onClick={() => {
+                        setSelectedMarkerId(m.id);
+                        setShowMenu(false);
+                      }}
+                      style={{
+                        padding: "8px 12px",
+                        cursor: "pointer",
+                        borderRadius: 10,
+                        border: "none",
+                        background: "#0ea5e9",
+                        color: "#fff",
+                        fontWeight: 700,
+                      }}
+                    >
+                      Xem
+                    </button>
+
+                    <button
+                      onClick={() => deleteMarker(m.id)}
+                      style={{
+                        padding: "8px 12px",
+                        cursor: "pointer",
+                        borderRadius: 10,
+                        border: "1px solid #fecaca",
+                        background: "#fff1f2",
+                        color: "#be123c",
+                        fontWeight: 700,
+                      }}
+                    >
+                      Xóa
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      <div
+        style={{
+          position: "absolute",
+          top: 16,
+          left: 84,
           zIndex: 1000,
           background: "rgba(255,255,255,0.96)",
           padding: "12px 16px",
@@ -568,20 +789,23 @@ export default function App() {
                   fontWeight: 700,
                   color: "#334155",
                   fontSize: 18,
+                  textAlign: "center",
                 }}
               >
                 Logo địa điểm
               </div>
-              <input
-                ref={logoInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleLogoUpload}
-              />
+              <div style={{ textAlign: "center" }}>
+                <input
+                  ref={logoInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleLogoUpload}
+                />
+              </div>
             </div>
 
             {draft.logo ? (
-              <div style={{ marginBottom: 12 }}>
+              <div style={{ marginBottom: 12, textAlign: "center" }}>
                 <img
                   src={draft.logo}
                   alt="Logo xem trước"
@@ -606,9 +830,9 @@ export default function App() {
                 padding: 14,
                 marginBottom: 10,
                 background: "#ffffff",
-                color: "#000000", // 🔥 chữ đen rõ
-                WebkitTextFillColor: "#000000", // 🔥 fix Chrome bị mờ
-                opacity: 1, // 🔥 QUAN TRỌNG
+                color: "#000000",
+                WebkitTextFillColor: "#000000",
+                opacity: 1,
                 boxSizing: "border-box",
                 borderRadius: 14,
                 border: "1px solid #cbd5e1",
@@ -624,11 +848,11 @@ export default function App() {
               style={{
                 width: "100%",
                 padding: 14,
-                marginBottom: 10,
+                marginBottom: 14,
                 background: "#ffffff",
-                color: "#000000", // 🔥 chữ đen rõ
-                WebkitTextFillColor: "#000000", // 🔥 fix Chrome bị mờ
-                opacity: 1, // 🔥 QUAN TRỌNG
+                color: "#000000",
+                WebkitTextFillColor: "#000000",
+                opacity: 1,
                 boxSizing: "border-box",
                 borderRadius: 14,
                 border: "1px solid #cbd5e1",
@@ -671,110 +895,6 @@ export default function App() {
           </div>
         </div>
       )}
-
-      <div
-        style={{
-          position: "absolute",
-          right: 16,
-          top: 16,
-          zIndex: 1000,
-          width: 320,
-          maxHeight: "calc(100vh - 32px)",
-          overflow: "auto",
-          background: "rgba(255,255,255,0.96)",
-          padding: 16,
-          borderRadius: 18,
-          boxShadow: "0 10px 30px rgba(0,0,0,0.12)",
-          border: "1px solid #e5e7eb",
-        }}
-      >
-        <h2 style={{ marginTop: 0, color: "#334155" }}>Danh sách địa điểm</h2>
-
-        {markers.length === 0 && <p style={{ color: "#64748b" }}>Chưa có địa điểm nào.</p>}
-
-        {markers.map((m) => (
-          <div
-            key={m.id}
-            style={{
-              border: "1px solid #e5e7eb",
-              padding: 14,
-              marginBottom: 12,
-              borderRadius: 18,
-              background: selectedMarkerId === m.id ? "#eff6ff" : "#ffffff",
-              boxShadow: "0 8px 22px rgba(0,0,0,0.05)",
-            }}
-          >
-            <strong style={{ color: "#0f172a", fontSize: 17 }}>{m.name}</strong>
-
-            {m.logo ? (
-              <div style={{ marginTop: 8 }}>
-                <img
-                  src={m.logo}
-                  alt={m.name}
-                  style={{
-                    width: 64,
-                    height: 64,
-                    objectFit: "cover",
-                    borderRadius: 14,
-                    border: "1px solid #ddd",
-                  }}
-                />
-              </div>
-            ) : null}
-
-            <div style={{ marginTop: 8, color: "#f59e0b", fontSize: 18 }}>
-              {m.rating ? (
-                renderStars(m.rating)
-              ) : (
-                <span style={{ color: "#888", fontSize: 14 }}>Chưa đánh giá</span>
-              )}
-            </div>
-
-            {m.rating ? (
-              <div style={{ color: "#666", fontSize: 14, marginTop: 4 }}>
-                {m.rating}/5 - {getRatingLabel(m.rating)}
-              </div>
-            ) : null}
-
-            <p style={{ marginBottom: 6, color: "#475569", lineHeight: 1.6 }}>{m.note}</p>
-
-            <small style={{ color: "#64748b" }}>
-              {m.lat}, {m.lng}
-            </small>
-
-            <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-              <button
-                onClick={() => setSelectedMarkerId(m.id)}
-                style={{
-                  padding: "8px 12px",
-                  cursor: "pointer",
-                  borderRadius: 10,
-                  border: "none",
-                  background: "#0ea5e9",
-                  color: "#fff",
-                  fontWeight: 700,
-                }}
-              >
-                Xem
-              </button>
-              <button
-                onClick={() => deleteMarker(m.id)}
-                style={{
-                  padding: "8px 12px",
-                  cursor: "pointer",
-                  borderRadius: 10,
-                  border: "1px solid #fecaca",
-                  background: "#fff1f2",
-                  color: "#be123c",
-                  fontWeight: 700,
-                }}
-              >
-                Xóa
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
 
       <div style={{ height: "100%", width: "100%" }}>
         <MapContainer
