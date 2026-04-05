@@ -11,36 +11,76 @@ import {
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 
-// Fix icon mặc định của Leaflet
+// Fix icon Leaflet mặc định
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
-  iconRetinaUrl: "https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-2x.png",
+  iconRetinaUrl:
+    "https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-2x.png",
   iconUrl: "https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png",
   shadowUrl: "https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png",
 });
 
+const STORAGE_KEY = "utt_life_map_markers";
+
 const defaultCenter = [21.29254772834021, 105.58421695202658];
 const radiusInMeters = 6000;
-
 const mapBounds = [
   [21.2325, 105.5242],
   [21.3525, 105.6442],
 ];
 
+const categories = [
+  { value: "cafe", label: "☕ Cà phê", color: "#8b5cf6" },
+  { value: "an_uong", label: "🍜 Ăn uống", color: "#ef4444" },
+  { value: "hoc_tap", label: "📚 Học tập", color: "#3b82f6" },
+  { value: "giai_tri", label: "🎮 Giải trí", color: "#eab308" },
+  { value: "photocopy", label: "📠 Photocopy", color: "#10b981" },
+  { value: "khac", label: "📍 Khác", color: "#64748b" },
+];
+
+const emptyDraft = {
+  id: null,
+  name: "",
+  note: "",
+  lat: "",
+  lng: "",
+  rating: 0,
+  category: "cafe",
+  media: [],
+};
+
+function getCategoryInfo(category) {
+  return categories.find((c) => c.value === category) || categories[categories.length - 1];
+}
+
+function getCategoryEmoji(category) {
+  return getCategoryInfo(category).label.split(" ")[0] || "📍";
+}
+
+function getCategoryLabel(category) {
+  return getCategoryInfo(category).label;
+}
+
+function formatDateTime(value) {
+  if (!value) return "";
+  try {
+    return new Date(value).toLocaleString("vi-VN");
+  } catch {
+    return "";
+  }
+}
+
 function getDistanceInMeters(lat1, lng1, lat2, lng2) {
   const R = 6371000;
   const toRad = (deg) => (deg * Math.PI) / 180;
-
   const dLat = toRad(lat2 - lat1);
   const dLng = toRad(lng2 - lng1);
-
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos(toRad(lat1)) *
       Math.cos(toRad(lat2)) *
       Math.sin(dLng / 2) *
       Math.sin(dLng / 2);
-
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
@@ -66,24 +106,56 @@ function renderStars(value) {
   return "★".repeat(value) + "☆".repeat(5 - value);
 }
 
-function createPlaceIcon(place) {
-  const safeName = (place.name || "Địa điểm")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+function sanitizeMarkers(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((m) => ({
+      id: m.id ?? Date.now() + Math.random(),
+      name: typeof m.name === "string" ? m.name : "Địa điểm",
+      note: typeof m.note === "string" ? m.note : "",
+      lat: Number(m.lat),
+      lng: Number(m.lng),
+      rating: Number(m.rating) || 0,
+      category: typeof m.category === "string" ? m.category : "khac",
+      media: Array.isArray(m.media) ? m.media : [],
+      createdAt: m.createdAt || new Date().toISOString(),
+    }))
+    .filter((m) => Number.isFinite(m.lat) && Number.isFinite(m.lng));
+}
 
-  const logoHtml = place.logo
-    ? `<img src="${place.logo}" style="width:46px;height:46px;border-radius:999px;object-fit:cover;border:2px solid #ffffff;box-shadow:0 2px 8px rgba(0,0,0,0.25);background:#fff;" />`
-    : `<div style="width:46px;height:46px;border-radius:999px;background:#2563eb;color:white;display:flex;align-items:center;justify-content:center;font-weight:700;border:2px solid #ffffff;box-shadow:0 2px 8px rgba(0,0,0,0.25);">
-         ${safeName.charAt(0).toUpperCase()}
-       </div>`;
+function createPlaceIcon(place, isActive = false) {
+  const safeName = (place.name || "Địa điểm").replace(
+    /[<>&"]/g,
+    (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c])
+  );
+
+  const categoryInfo = getCategoryInfo(place.category);
+  const emoji = getCategoryEmoji(place.category);
+
+  const glow = isActive
+    ? "0 0 0 5px rgba(37,99,235,0.22), 0 10px 24px rgba(0,0,0,0.28)"
+    : "0 2px 8px rgba(0,0,0,0.25)";
 
   return L.divIcon({
     className: "",
     html: `
       <div style="display:flex;flex-direction:column;align-items:center;transform:translateY(-8px);">
-        ${logoHtml}
+        <div style="
+          width:46px;
+          height:46px;
+          border-radius:999px;
+          background:${categoryInfo.color};
+          color:white;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          font-size:24px;
+          font-weight:700;
+          border:3px solid #fff;
+          box-shadow:${glow};
+        ">
+          ${emoji}
+        </div>
         <div style="
           margin-top:6px;
           background:#ffffff;
@@ -94,18 +166,17 @@ function createPlaceIcon(place) {
           color:#111827;
           box-shadow:0 2px 8px rgba(0,0,0,0.18);
           white-space:nowrap;
-          max-width:150px;
+          max-width:155px;
           overflow:hidden;
           text-overflow:ellipsis;
           border:1px solid #e5e7eb;
         ">
           ${safeName}
         </div>
-      </div>
-    `,
-    iconSize: [150, 74],
+      </div>`,
+    iconSize: [155, 74],
     iconAnchor: [23, 58],
-    popupAnchor: [0, -52],
+    popupAnchor: [0, -50],
   });
 }
 
@@ -113,27 +184,12 @@ function StarRatingInput({ value, onChange }) {
   const [hoverValue, setHoverValue] = useState(0);
 
   return (
-    <div style={{ marginBottom: 14, textAlign: "center" }}>
-      <div
-        style={{
-          marginBottom: 8,
-          fontWeight: 700,
-          color: "#334155",
-          fontSize: 18,
-        }}
-      >
+    <div style={{ textAlign: "center", margin: "18px 0 20px" }}>
+      <div style={{ fontWeight: 700, color: "#1e293b", marginBottom: 8 }}>
         Đánh giá
       </div>
 
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          gap: 6,
-          marginBottom: 6,
-        }}
-      >
+      <div style={{ display: "flex", justifyContent: "center", gap: 6 }}>
         {[1, 2, 3, 4, 5].map((star) => {
           const active = hoverValue ? star <= hoverValue : star <= value;
 
@@ -145,28 +201,21 @@ function StarRatingInput({ value, onChange }) {
               onMouseEnter={() => setHoverValue(star)}
               onMouseLeave={() => setHoverValue(0)}
               style={{
+                background: "none",
                 border: "none",
-                background: "transparent",
+                fontSize: 34,
                 cursor: "pointer",
-                padding: 0,
+                color: active ? "#f59e0b" : "#d1d5db",
                 lineHeight: 1,
-                fontSize: 32,
               }}
-              title={`${star} sao`}
             >
-              <span style={{ color: active ? "#f59e0b" : "#d1d5db" }}>★</span>
+              ★
             </button>
           );
         })}
       </div>
 
-      <div
-        style={{
-          fontSize: 14,
-          color: "#64748b",
-          fontWeight: 500,
-        }}
-      >
+      <div style={{ marginTop: 6, fontSize: 14, color: "#64748b" }}>
         {value > 0 ? `${value}/5 - ${getRatingLabel(value)}` : "Chưa đánh giá"}
       </div>
     </div>
@@ -179,7 +228,6 @@ function MapClickHandler({ onMapPointClick }) {
       onMapPointClick(e.latlng.lat, e.latlng.lng);
     },
   });
-
   return null;
 }
 
@@ -187,208 +235,697 @@ function FlyToMarker({ target }) {
   const map = useMap();
 
   useEffect(() => {
-    if (!target) return;
-    map.flyTo([target.lat, target.lng], 16, { duration: 1.2 });
+    if (target) {
+      map.flyTo([target.lat, target.lng], 16, { duration: 1.2 });
+    }
   }, [target, map]);
 
   return null;
 }
 
+function FixMapSize() {
+  const map = useMap();
+
+  useEffect(() => {
+    const invalidate = () => map.invalidateSize();
+
+    setTimeout(invalidate, 100);
+    setTimeout(invalidate, 300);
+    setTimeout(invalidate, 600);
+
+    window.addEventListener("resize", invalidate);
+    return () => window.removeEventListener("resize", invalidate);
+  }, [map]);
+
+  return null;
+}
+
+function MapController({ mapRef }) {
+  const map = useMap();
+
+  useEffect(() => {
+    mapRef.current = map;
+  }, [map, mapRef]);
+
+  return null;
+}
+
+function MediaPreviewItem({ item, onRemove }) {
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: "100%",
+        aspectRatio: "1 / 1",
+        borderRadius: 14,
+        overflow: "hidden",
+        background: "#f8fafc",
+      }}
+    >
+      {item.type === "image" ? (
+        <img
+          src={item.url}
+          alt="media"
+          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+        />
+      ) : (
+        <video
+          src={item.url}
+          controls
+          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+        />
+      )}
+
+      <button
+        type="button"
+        onClick={() => onRemove(item.id)}
+        style={{
+          position: "absolute",
+          top: 6,
+          right: 6,
+          width: 28,
+          height: 28,
+          borderRadius: 999,
+          border: "none",
+          background: "rgba(15,23,42,0.82)",
+          color: "#fff",
+          cursor: "pointer",
+          fontWeight: 700,
+        }}
+        title="Xóa media"
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
+function PlacePopup({ marker, onEdit, onDelete }) {
+  return (
+    <div style={{ width: 280, color: "#0f172a" }}>
+      <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+        <div
+          style={{
+            width: 56,
+            height: 56,
+            borderRadius: 16,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 26,
+            background: getCategoryInfo(marker.category).color,
+            color: "#fff",
+            flexShrink: 0,
+          }}
+        >
+          {getCategoryEmoji(marker.category)}
+        </div>
+
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 18, fontWeight: 800, lineHeight: 1.3 }}>
+            {marker.name}
+          </div>
+
+          <div
+            style={{
+              marginTop: 4,
+              fontSize: 13,
+              color: "#475569",
+            }}
+          >
+            {getCategoryLabel(marker.category)}
+          </div>
+
+          {marker.rating > 0 && (
+            <div style={{ marginTop: 6, color: "#f59e0b", fontSize: 18 }}>
+              {renderStars(marker.rating)}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {marker.note && (
+        <p
+          style={{
+            marginTop: 12,
+            fontSize: 14,
+            lineHeight: 1.55,
+            color: "#334155",
+          }}
+        >
+          {marker.note}
+        </p>
+      )}
+
+      {marker.media?.length > 0 && (
+        <div
+          style={{
+            marginTop: 12,
+            display: "flex",
+            gap: 8,
+            overflowX: "auto",
+            paddingBottom: 4,
+          }}
+        >
+          {marker.media.slice(0, 6).map((item) =>
+            item.type === "image" ? (
+              <img
+                key={item.id}
+                src={item.url}
+                alt="media"
+                style={{
+                  width: 80,
+                  height: 80,
+                  borderRadius: 12,
+                  objectFit: "cover",
+                  border: "1px solid #e5e7eb",
+                  flex: "0 0 auto",
+                }}
+              />
+            ) : (
+              <video
+                key={item.id}
+                src={item.url}
+                controls
+                style={{
+                  width: 120,
+                  height: 80,
+                  borderRadius: 12,
+                  objectFit: "cover",
+                  border: "1px solid #e5e7eb",
+                  flex: "0 0 auto",
+                }}
+              />
+            )
+          )}
+        </div>
+      )}
+
+      <div
+        style={{
+          marginTop: 12,
+          fontSize: 12.5,
+          color: "#64748b",
+          lineHeight: 1.5,
+        }}
+      >
+        <div>
+          Tọa độ: {Number(marker.lat).toFixed(6)}, {Number(marker.lng).toFixed(6)}
+        </div>
+        <div>Thêm lúc: {formatDateTime(marker.createdAt)}</div>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+        <button
+          type="button"
+          onClick={() => onEdit(marker)}
+          style={{
+            flex: 1,
+            padding: "10px 12px",
+            background: "#eab308",
+            color: "#fff",
+            border: "none",
+            borderRadius: 10,
+            cursor: "pointer",
+            fontWeight: 700,
+          }}
+        >
+          Sửa
+        </button>
+        <button
+          type="button"
+          onClick={() => onDelete(marker.id)}
+          style={{
+            flex: 1,
+            padding: "10px 12px",
+            background: "#fee2e2",
+            color: "#dc2626",
+            border: "none",
+            borderRadius: 10,
+            cursor: "pointer",
+            fontWeight: 700,
+          }}
+        >
+          Xóa
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [markers, setMarkers] = useState(() => {
-    const saved = localStorage.getItem("utt_life_map_markers");
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (!saved) return [];
+      return sanitizeMarkers(JSON.parse(saved));
+    } catch {
+      return [];
+    }
   });
 
-  const [draft, setDraft] = useState({
-    name: "",
-    note: "",
-    lat: "",
-    lng: "",
-    rating: 0,
-    logo: "",
-  });
-
-  const [message, setMessage] = useState(
-    "Nhấn vào một vị trí trên bản đồ để thêm địa điểm."
-  );
+  const [draft, setDraft] = useState(emptyDraft);
+  const [message, setMessage] = useState("");
   const [selectedMarkerId, setSelectedMarkerId] = useState(null);
   const [tempPoint, setTempPoint] = useState(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
 
-  const logoInputRef = useRef(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("newest");
+
+  const mediaInputRef = useRef(null);
+  const mapRef = useRef(null);
+  const toastTimeoutRef = useRef(null);
 
   useEffect(() => {
-    localStorage.setItem("utt_life_map_markers", JSON.stringify(markers));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(markers));
   }, [markers]);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    const styleEl = document.createElement("style");
+    styleEl.setAttribute("data-utt-leaflet-fix", "true");
+    styleEl.textContent = `
+      .utt-map-scope,
+      .utt-map-scope * {
+        mix-blend-mode: normal;
+      }
+
+      .utt-map-scope .leaflet-container,
+      .utt-map-scope .leaflet-map-pane,
+      .utt-map-scope .leaflet-tile-pane,
+      .utt-map-scope .leaflet-pane,
+      .utt-map-scope .leaflet-layer {
+        filter: none !important;
+      }
+
+      .utt-map-scope .leaflet-container img,
+      .utt-map-scope .leaflet-pane img,
+      .utt-map-scope .leaflet-tile {
+        max-width: none !important;
+        filter: none !important;
+        mix-blend-mode: normal !important;
+        opacity: 1 !important;
+      }
+
+      .utt-map-scope .leaflet-tile {
+        width: 256px !important;
+        height: 256px !important;
+        display: block !important;
+        visibility: visible !important;
+      }
+
+      .utt-map-scope .leaflet-marker-icon,
+      .utt-map-scope .leaflet-marker-shadow {
+        max-width: none !important;
+        filter: none !important;
+      }
+
+      .utt-map-scope .leaflet-container {
+        background: #dbeafe;
+        isolation: isolate;
+      }
+
+      .utt-map-scope .utt-place-form-grid {
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr;
+      }
+
+      @media (max-width: 860px) {
+        .utt-map-scope .utt-place-form-grid {
+          grid-template-columns: 1fr !important;
+        }
+      }
+    `;
+    document.head.appendChild(styleEl);
+
+    return () => {
+      styleEl.remove();
+    };
+  }, []);
 
   const selectedMarker = useMemo(
     () => markers.find((m) => m.id === selectedMarkerId) || null,
     [markers, selectedMarkerId]
   );
 
-  const resetDraft = () => {
-    setDraft({
-      name: "",
-      note: "",
-      lat: "",
-      lng: "",
-      rating: 0,
-      logo: "",
+  const filteredMarkers = useMemo(() => {
+    const keyword = searchTerm.trim().toLowerCase();
+
+    const list = markers.filter((m) => {
+      const matchSearch =
+        !keyword ||
+        m.name.toLowerCase().includes(keyword) ||
+        (m.note && m.note.toLowerCase().includes(keyword));
+
+      const matchCat = categoryFilter === "all" || m.category === categoryFilter;
+      return matchSearch && matchCat;
     });
+
+    if (sortBy === "rating") {
+      list.sort((a, b) => (b.rating || 0) - (a.rating || 0));
+    } else if (sortBy === "name") {
+      list.sort((a, b) => a.name.localeCompare(b.name, "vi"));
+    } else {
+      list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    }
+
+    return list;
+  }, [markers, searchTerm, categoryFilter, sortBy]);
+
+  const totalStats = useMemo(() => {
+    const ratedCount = markers.filter((m) => m.rating > 0).length;
+    const avgRating =
+      ratedCount > 0
+        ? (
+            markers.reduce((sum, m) => sum + (m.rating || 0), 0) / ratedCount
+          ).toFixed(1)
+        : "0.0";
+
+    return {
+      total: markers.length,
+      ratedCount,
+      avgRating,
+    };
+  }, [markers]);
+
+  const showMessage = (text) => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    setMessage(text);
+    toastTimeoutRef.current = setTimeout(() => setMessage(""), 2400);
+  };
+
+  const resetDraft = () => {
+    setDraft(emptyDraft);
     setTempPoint(null);
     setShowConfirm(false);
     setShowForm(false);
-    if (logoInputRef.current) {
-      logoInputRef.current.value = "";
-    }
+    setIsEditing(false);
+    if (mediaInputRef.current) mediaInputRef.current.value = "";
+  };
+
+  const openCreateFormAtPoint = () => {
+    setShowConfirm(false);
+    setShowForm(true);
   };
 
   const handleMapPointClick = (lat, lng) => {
-    const distance = getDistanceInMeters(
-      defaultCenter[0],
-      defaultCenter[1],
-      lat,
-      lng
-    );
-
-    if (distance > radiusInMeters) {
-      setMessage("Bạn chỉ được đánh dấu địa điểm trong bán kính 6km.");
+    if (
+      getDistanceInMeters(defaultCenter[0], defaultCenter[1], lat, lng) >
+      radiusInMeters
+    ) {
+      showMessage("❌ Chỉ được thêm trong bán kính 6km quanh UTT");
       return;
     }
 
     setDraft((prev) => ({
       ...prev,
+      id: null,
       lat: lat.toFixed(6),
       lng: lng.toFixed(6),
     }));
     setTempPoint([lat, lng]);
+    setIsEditing(false);
     setShowConfirm(true);
-    setShowForm(false);
-    setMessage("Bạn đã chọn một vị trí mới.");
-  };
-
-  const handleAgreeAddLocation = () => {
-    setShowConfirm(false);
-    setShowForm(true);
-    setMessage("Hãy nhập thông tin địa điểm.");
   };
 
   const handleCancelAddLocation = () => {
     setShowConfirm(false);
-    setShowForm(false);
     setTempPoint(null);
-    setDraft((prev) => ({
-      ...prev,
-      lat: "",
-      lng: "",
-    }));
-    setMessage("Đã hủy thêm địa điểm.");
+    setDraft((prev) => ({ ...prev, lat: "", lng: "" }));
+    showMessage("Đã hủy");
   };
 
-  const handleLogoUpload = (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  const handleMediaUpload = (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
 
-    if (!file.type.startsWith("image/")) {
-      setMessage("Vui lòng chọn file ảnh làm logo.");
+    const validFiles = files.filter(
+      (file) =>
+        file.type.startsWith("image/") || file.type.startsWith("video/")
+    );
+
+    if (!validFiles.length) {
+      showMessage("❌ Chỉ hỗ trợ ảnh hoặc video");
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
+    Promise.all(
+      validFiles.map(
+        (file) =>
+          new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () =>
+              resolve({
+                id: Date.now() + Math.random(),
+                type: file.type.startsWith("image/") ? "image" : "video",
+                url: String(reader.result || ""),
+              });
+            reader.readAsDataURL(file);
+          })
+      )
+    ).then((uploadedMedia) => {
       setDraft((prev) => ({
         ...prev,
-        logo: String(reader.result),
+        media: [...(prev.media || []), ...uploadedMedia],
       }));
-      setMessage("Đã thêm logo cho địa điểm.");
-    };
-    reader.readAsDataURL(file);
+      if (mediaInputRef.current) mediaInputRef.current.value = "";
+      showMessage(`✅ Đã thêm ${uploadedMedia.length} media`);
+    });
   };
 
-  const addMarker = () => {
-    if (!draft.name || !draft.lat || !draft.lng) {
-      setMessage("Vui lòng chọn vị trí và nhập tên địa điểm.");
+  const removeDraftMedia = (mediaId) => {
+    setDraft((prev) => ({
+      ...prev,
+      media: (prev.media || []).filter((item) => item.id !== mediaId),
+    }));
+  };
+
+  const saveMarker = () => {
+    if (!draft.name.trim()) {
+      showMessage("❌ Vui lòng nhập tên địa điểm");
       return;
     }
 
     const lat = Number(draft.lat);
     const lng = Number(draft.lng);
 
-    const distance = getDistanceInMeters(
-      defaultCenter[0],
-      defaultCenter[1],
-      lat,
-      lng
-    );
-
-    if (distance > radiusInMeters) {
-      setMessage("Không thể thêm địa điểm ngoài bán kính 6km.");
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      showMessage("❌ Tọa độ không hợp lệ");
       return;
     }
 
-    const newMarker = {
-      id: Date.now(),
-      name: draft.name.trim(),
-      note: draft.note.trim(),
-      lat,
-      lng,
-      rating: Number(draft.rating) || 0,
-      logo: draft.logo || "",
-      createdAt: new Date().toISOString(),
-    };
+    if (
+      getDistanceInMeters(defaultCenter[0], defaultCenter[1], lat, lng) >
+      radiusInMeters
+    ) {
+      showMessage("❌ Vị trí ngoài bán kính cho phép");
+      return;
+    }
 
-    setMarkers((prev) => [newMarker, ...prev]);
-    setSelectedMarkerId(newMarker.id);
+    if (isEditing) {
+      setMarkers((prev) =>
+        prev.map((m) =>
+          m.id === draft.id
+            ? {
+                ...m,
+                name: draft.name.trim(),
+                note: draft.note.trim(),
+                rating: draft.rating,
+                category: draft.category,
+                media: draft.media || [],
+              }
+            : m
+        )
+      );
+      setSelectedMarkerId(draft.id);
+      showMessage("✅ Đã cập nhật địa điểm");
+    } else {
+      const newMarker = {
+        id: Date.now(),
+        name: draft.name.trim(),
+        note: draft.note.trim(),
+        lat,
+        lng,
+        rating: draft.rating,
+        category: draft.category,
+        media: draft.media || [],
+        createdAt: new Date().toISOString(),
+      };
+
+      setMarkers((prev) => [newMarker, ...prev]);
+      setSelectedMarkerId(newMarker.id);
+      showMessage("✅ Đã thêm địa điểm thành công");
+    }
+
     resetDraft();
-    setMessage("Đã thêm địa điểm thành công.");
+  };
+
+  const startEdit = (marker) => {
+    setDraft({
+      id: marker.id,
+      name: marker.name || "",
+      note: marker.note || "",
+      lat: String(marker.lat ?? ""),
+      lng: String(marker.lng ?? ""),
+      rating: marker.rating || 0,
+      category: marker.category || "khac",
+      media: marker.media || [],
+    });
+
+    setTempPoint([marker.lat, marker.lng]);
+    setIsEditing(true);
+    setShowForm(true);
+    setShowMenu(false);
+    setShowConfirm(false);
+
+    if (mapRef.current) {
+      mapRef.current.flyTo([marker.lat, marker.lng], 16, { duration: 1.2 });
+    }
   };
 
   const deleteMarker = (id) => {
+    if (!window.confirm("Xóa địa điểm này?")) return;
+
     setMarkers((prev) => prev.filter((m) => m.id !== id));
-    if (selectedMarkerId === id) {
-      setSelectedMarkerId(null);
+    if (selectedMarkerId === id) setSelectedMarkerId(null);
+    showMessage("🗑️ Đã xóa địa điểm");
+  };
+
+  const focusMarker = (marker) => {
+    setSelectedMarkerId(marker.id);
+    setShowMenu(false);
+
+    if (mapRef.current) {
+      mapRef.current.flyTo([marker.lat, marker.lng], 16, { duration: 1.2 });
     }
-    setMessage("Đã xóa địa điểm.");
+  };
+
+  const goToMyLocation = () => {
+    if (!navigator.geolocation) {
+      showMessage("❌ Trình duyệt không hỗ trợ định vị");
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        if (mapRef.current) {
+          mapRef.current.flyTo([latitude, longitude], 16, { duration: 1.2 });
+        }
+        showMessage(
+          `📍 Vị trí của bạn: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`
+        );
+      },
+      () => showMessage("❌ Không lấy được vị trí"),
+      { enableHighAccuracy: true, timeout: 12000 }
+    );
   };
 
   return (
     <div
+      className="utt-map-scope"
       style={{
-        height: "100vh",
-        width: "100vw",
-        overflow: "hidden",
         position: "relative",
+        width: "100%",
+        minHeight: "100svh",
         background: "#f8fafc",
+        overflow: "hidden",
       }}
     >
       <button
-        onClick={() => setShowMenu((prev) => !prev)}
+        onClick={() => setShowMenu(!showMenu)}
         style={{
           position: "absolute",
           top: 16,
           left: 16,
-          zIndex: 1200,
+          zIndex: 2000,
           width: 52,
           height: 52,
           borderRadius: 14,
           border: "none",
-          background: "#ffffff",
+          background: "#fff",
           boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
-          cursor: "pointer",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
           fontSize: 26,
-          fontWeight: 700,
-          color: "#1e293b",
+          cursor: "pointer",
         }}
         title="Mở menu"
       >
         ☰
       </button>
+
+      <button
+        onClick={goToMyLocation}
+        style={{
+          position: "absolute",
+          top: 16,
+          left: 80,
+          zIndex: 2000,
+          width: 52,
+          height: 52,
+          borderRadius: 14,
+          border: "none",
+          background: "#fff",
+          boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
+          fontSize: 24,
+          cursor: "pointer",
+        }}
+        title="Vị trí của tôi"
+      >
+        📍
+      </button>
+
+      <div
+        style={{
+          position: "absolute",
+          top: 16,
+          left: 150,
+          zIndex: 1000,
+          background: "rgba(255,255,255,0.98)",
+          padding: "12px 20px",
+          borderRadius: 18,
+          boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
+          border: "1px solid #e5e7eb",
+          backdropFilter: "blur(8px)",
+          textAlign: "left",
+        }}
+      >
+        <h1
+          style={{
+            margin: 0,
+            fontSize: 30,
+            fontWeight: 900,
+            color: "#0f172a",
+            lineHeight: 1.1,
+          }}
+        >
+          UTT Life Map
+        </h1>
+
+        <div
+          style={{
+            marginTop: 6,
+            display: "flex",
+            gap: 10,
+            flexWrap: "wrap",
+            fontSize: 13,
+            color: "#475569",
+          }}
+        >
+          <span>📍 {totalStats.total} địa điểm</span>
+          <span>⭐ {totalStats.avgRating}/5</span>
+          <span>📝 {totalStats.ratedCount} địa điểm đã đánh giá</span>
+        </div>
+      </div>
 
       {showMenu && (
         <>
@@ -397,7 +934,7 @@ export default function App() {
             style={{
               position: "absolute",
               inset: 0,
-              background: "rgba(15,23,42,0.25)",
+              background: "rgba(15,23,42,0.4)",
               zIndex: 1100,
             }}
           />
@@ -407,51 +944,49 @@ export default function App() {
               position: "absolute",
               top: 0,
               left: 0,
-              width: 360,
+              width: 390,
+              maxWidth: "92vw",
               height: "100%",
-              background: "#ffffff",
+              background: "#fff",
               zIndex: 1300,
-              boxShadow: "12px 0 30px rgba(0,0,0,0.18)",
+              boxShadow: "12px 0 30px rgba(0,0,0,0.2)",
               display: "flex",
               flexDirection: "column",
             }}
           >
             <div
               style={{
-                padding: "18px 20px",
+                padding: "24px 20px 16px",
                 borderBottom: "1px solid #e5e7eb",
                 display: "flex",
-                alignItems: "center",
                 justifyContent: "space-between",
+                alignItems: "center",
+                gap: 12,
               }}
             >
               <div>
                 <div
                   style={{
-                    fontSize: 24,
+                    fontSize: 26,
                     fontWeight: 800,
                     color: "#1e293b",
-                    marginBottom: 4,
                   }}
                 >
-                  Menu
+                  Danh sách địa điểm
                 </div>
+
                 <div style={{ color: "#64748b", fontSize: 14 }}>
-                  Danh sách các mục
+                  {filteredMarkers.length} / {markers.length} địa điểm
                 </div>
               </div>
 
               <button
                 onClick={() => setShowMenu(false)}
                 style={{
+                  fontSize: 28,
                   border: "none",
-                  background: "#f1f5f9",
-                  borderRadius: 10,
-                  width: 38,
-                  height: 38,
+                  background: "none",
                   cursor: "pointer",
-                  fontSize: 20,
-                  color: "#334155",
                 }}
               >
                 ×
@@ -462,518 +997,746 @@ export default function App() {
               style={{
                 padding: 16,
                 borderBottom: "1px solid #e5e7eb",
+                display: "flex",
+                flexDirection: "column",
+                gap: 12,
               }}
             >
-              <div
+              <input
+                type="text"
+                placeholder="🔎 Tìm kiếm địa điểm..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
                 style={{
-                  padding: "12px 14px",
-                  borderRadius: 12,
-                  background: "#eff6ff",
-                  color: "#1d4ed8",
-                  fontWeight: 700,
-                  border: "1px solid #bfdbfe",
+                  padding: 14,
+                  borderRadius: 14,
+                  border: "1px solid #cbd5e1",
+                  fontSize: 15,
                 }}
-              >
-                Danh sách địa điểm
+              />
+
+              <div style={{ display: "flex", gap: 8 }}>
+                <select
+                  value={categoryFilter}
+                  onChange={(e) => setCategoryFilter(e.target.value)}
+                  style={{
+                    flex: 1,
+                    padding: 14,
+                    borderRadius: 14,
+                    border: "1px solid #cbd5e1",
+                  }}
+                >
+                  <option value="all">Tất cả loại</option>
+                  {categories.map((cat) => (
+                    <option key={cat.value} value={cat.value}>
+                      {cat.label}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                  style={{
+                    flex: 1,
+                    padding: 14,
+                    borderRadius: 14,
+                    border: "1px solid #cbd5e1",
+                  }}
+                >
+                  <option value="newest">Mới nhất</option>
+                  <option value="rating">Rating cao nhất</option>
+                  <option value="name">Tên A-Z</option>
+                </select>
               </div>
             </div>
 
-            <div
-              style={{
-                flex: 1,
-                overflow: "auto",
-                padding: 16,
-              }}
-            >
-              {markers.length === 0 && (
-                <p style={{ color: "#64748b" }}>Chưa có địa điểm nào.</p>
-              )}
-
-              {markers.map((m) => (
-                <div
-                  key={m.id}
+            <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
+              {filteredMarkers.length === 0 ? (
+                <p
                   style={{
-                    border: "1px solid #e5e7eb",
-                    padding: 14,
-                    marginBottom: 12,
-                    borderRadius: 18,
-                    background: selectedMarkerId === m.id ? "#eff6ff" : "#ffffff",
-                    boxShadow: "0 8px 22px rgba(0,0,0,0.05)",
+                    textAlign: "center",
+                    color: "#64748b",
+                    padding: 30,
                   }}
                 >
-                  <strong style={{ color: "#0f172a", fontSize: 17 }}>{m.name}</strong>
-
-                  {m.logo ? (
-                    <div style={{ marginTop: 8 }}>
-                      <img
-                        src={m.logo}
-                        alt={m.name}
+                  Không tìm thấy địa điểm nào
+                </p>
+              ) : (
+                filteredMarkers.map((m) => (
+                  <div
+                    key={m.id}
+                    style={{
+                      padding: 16,
+                      marginBottom: 12,
+                      border: "1px solid #e5e7eb",
+                      borderRadius: 18,
+                      background:
+                        selectedMarkerId === m.id ? "#eff6ff" : "#fff",
+                      boxShadow:
+                        selectedMarkerId === m.id
+                          ? "0 6px 20px rgba(37,99,235,0.08)"
+                          : "none",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 10,
+                      }}
+                    >
+                      <strong
                         style={{
-                          width: 64,
-                          height: 64,
-                          objectFit: "cover",
-                          borderRadius: 14,
-                          border: "1px solid #ddd",
+                          color: "#0f172a",
+                          fontSize: 16,
+                          textAlign: "left",
                         }}
-                      />
-                    </div>
-                  ) : null}
+                      >
+                        {m.name}
+                      </strong>
 
-                  <div style={{ marginTop: 8, color: "#f59e0b", fontSize: 18 }}>
-                    {m.rating ? (
-                      renderStars(m.rating)
-                    ) : (
-                      <span style={{ color: "#888", fontSize: 14 }}>
-                        Chưa đánh giá
+                      <span style={{ fontSize: 22 }}>
+                        {getCategoryEmoji(m.category)}
                       </span>
-                    )}
-                  </div>
-
-                  {m.rating ? (
-                    <div style={{ color: "#666", fontSize: 14, marginTop: 4 }}>
-                      {m.rating}/5 - {getRatingLabel(m.rating)}
                     </div>
-                  ) : null}
 
-                  <p style={{ marginBottom: 6, color: "#475569", lineHeight: 1.6 }}>
-                    {m.note}
-                  </p>
-
-                  <small style={{ color: "#64748b" }}>
-                    {m.lat}, {m.lng}
-                  </small>
-
-                  <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-                    <button
-                      onClick={() => {
-                        setSelectedMarkerId(m.id);
-                        setShowMenu(false);
-                      }}
+                    <div
                       style={{
-                        padding: "8px 12px",
-                        cursor: "pointer",
-                        borderRadius: 10,
-                        border: "none",
-                        background: "#0ea5e9",
-                        color: "#fff",
-                        fontWeight: 700,
+                        marginTop: 6,
+                        fontSize: 13,
+                        color: "#64748b",
+                        textAlign: "left",
                       }}
                     >
-                      Xem
-                    </button>
+                      {getCategoryLabel(m.category)}
+                    </div>
 
-                    <button
-                      onClick={() => deleteMarker(m.id)}
+                    {m.rating > 0 && (
+                      <div
+                        style={{
+                          color: "#f59e0b",
+                          fontSize: 18,
+                          margin: "8px 0",
+                          textAlign: "left",
+                        }}
+                      >
+                        {renderStars(m.rating)}
+                      </div>
+                    )}
+
+                    {m.note && (
+                      <p
+                        style={{
+                          color: "#475569",
+                          marginTop: 8,
+                          lineHeight: 1.5,
+                          textAlign: "left",
+                        }}
+                      >
+                        {m.note}
+                      </p>
+                    )}
+
+                    {m.media?.length > 0 && (
+                      <div
+                        style={{
+                          marginTop: 10,
+                          display: "flex",
+                          gap: 8,
+                          overflowX: "auto",
+                          paddingBottom: 4,
+                        }}
+                      >
+                        {m.media.slice(0, 4).map((item) =>
+                          item.type === "image" ? (
+                            <img
+                              key={item.id}
+                              src={item.url}
+                              alt="media"
+                              style={{
+                                width: 62,
+                                height: 62,
+                                objectFit: "cover",
+                                borderRadius: 10,
+                                border: "1px solid #e5e7eb",
+                                flex: "0 0 auto",
+                              }}
+                            />
+                          ) : (
+                            <video
+                              key={item.id}
+                              src={item.url}
+                              style={{
+                                width: 88,
+                                height: 62,
+                                objectFit: "cover",
+                                borderRadius: 10,
+                                border: "1px solid #e5e7eb",
+                                flex: "0 0 auto",
+                              }}
+                            />
+                          )
+                        )}
+                      </div>
+                    )}
+
+                    <div
                       style={{
-                        padding: "8px 12px",
-                        cursor: "pointer",
-                        borderRadius: 10,
-                        border: "1px solid #fecaca",
-                        background: "#fff1f2",
-                        color: "#be123c",
-                        fontWeight: 700,
+                        marginTop: 14,
+                        display: "flex",
+                        gap: 8,
+                        flexWrap: "wrap",
                       }}
                     >
-                      Xóa
-                    </button>
+                      <button
+                        onClick={() => focusMarker(m)}
+                        style={{
+                          flex: 1,
+                          padding: 10,
+                          background: "#0ea5e9",
+                          color: "#fff",
+                          border: "none",
+                          borderRadius: 10,
+                          cursor: "pointer",
+                          fontWeight: 700,
+                        }}
+                      >
+                        Xem
+                      </button>
+
+                      <button
+                        onClick={() => startEdit(m)}
+                        style={{
+                          flex: 1,
+                          padding: 10,
+                          background: "#22c55e",
+                          color: "#fff",
+                          border: "none",
+                          borderRadius: 10,
+                          cursor: "pointer",
+                          fontWeight: 700,
+                        }}
+                      >
+                        📸 Thêm media
+                      </button>
+
+                      <button
+                        onClick={() => startEdit(m)}
+                        style={{
+                          flex: 1,
+                          padding: 10,
+                          background: "#eab308",
+                          color: "#fff",
+                          border: "none",
+                          borderRadius: 10,
+                          cursor: "pointer",
+                          fontWeight: 700,
+                        }}
+                      >
+                        Sửa
+                      </button>
+
+                      <button
+                        onClick={() => deleteMarker(m.id)}
+                        style={{
+                          flex: 1,
+                          padding: 10,
+                          background: "#fee2e2",
+                          color: "#ef4444",
+                          border: "none",
+                          borderRadius: 10,
+                          cursor: "pointer",
+                          fontWeight: 700,
+                        }}
+                      >
+                        Xóa
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
         </>
       )}
 
-      <div
-        style={{
-          position: "absolute",
-          top: 16,
-          left: 84,
-          zIndex: 1000,
-          background: "rgba(255,255,255,0.96)",
-          padding: "12px 16px",
-          borderRadius: 16,
-          boxShadow: "0 10px 30px rgba(0,0,0,0.12)",
-          maxWidth: 360,
-          border: "1px solid #e5e7eb",
-        }}
-      >
-        <h1
-          style={{
-            margin: 0,
-            marginBottom: 6,
-            fontSize: 34,
-            fontWeight: 800,
-            color: "#1e293b",
-            letterSpacing: "-1px",
-          }}
+      <div style={{ position: "absolute", inset: 0 }}>
+        <MapContainer
+          className="utt-leaflet-map"
+          center={defaultCenter}
+          zoom={13}
+          maxBounds={mapBounds}
+          maxBoundsViscosity={1.0}
+          style={{ width: "100%", height: "100%" }}
         >
-          UTT Life Map
-        </h1>
+          <MapController mapRef={mapRef} />
+          <FixMapSize />
 
-        <div style={{ color: "#475569", fontSize: 15, lineHeight: 1.5 }}>
-          {message}
-        </div>
+          <TileLayer
+            attribution="&copy; OpenStreetMap contributors"
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            tileSize={256}
+            zoomOffset={0}
+            updateWhenIdle={true}
+            keepBuffer={4}
+          />
 
-        <div
-          style={{
-            marginTop: 10,
-            padding: 10,
-            borderRadius: 12,
-            background: "#f8fafc",
-            border: "1px solid #e2e8f0",
-            color: "#475569",
-            fontSize: 14,
-            lineHeight: 1.6,
-          }}
-        >
-          <strong style={{ color: "#334155" }}>Tâm bản đồ:</strong>
-          <br />
-          {defaultCenter[0]}, {defaultCenter[1]}
-          <br />
-          <strong style={{ color: "#334155" }}>Bán kính:</strong> 6km
-        </div>
-      </div>
-
-      {showConfirm && (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            background: "rgba(15,23,42,0.35)",
-            zIndex: 2000,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-          }}
-        >
-          <div
-            style={{
-              width: "100%",
-              maxWidth: 420,
-              background: "#fff",
-              borderRadius: 20,
-              boxShadow: "0 20px 50px rgba(0,0,0,0.2)",
-              padding: 24,
+          <Circle
+            center={defaultCenter}
+            radius={radiusInMeters}
+            pathOptions={{
+              color: "#2563eb",
+              fillColor: "#3b82f6",
+              fillOpacity: 0.08,
             }}
-          >
-            <h2 style={{ marginTop: 0, color: "#0f172a" }}>Thêm địa điểm mới</h2>
-            <p style={{ color: "#475569", lineHeight: 1.6 }}>
-              Bạn đã chọn một vị trí trên bản đồ.
-              <br />
-              Bạn có muốn thêm địa điểm tại vị trí này không?
-            </p>
+          />
 
-            <div
-              style={{
-                background: "#f8fafc",
-                border: "1px solid #e2e8f0",
-                borderRadius: 12,
-                padding: 12,
-                color: "#475569",
-                marginBottom: 16,
+          <MapClickHandler onMapPointClick={handleMapPointClick} />
+          <FlyToMarker target={selectedMarker} />
+
+          {tempPoint && <Marker position={tempPoint} />}
+
+          {tempPoint && showConfirm && (
+            <Popup
+              position={tempPoint}
+              autoClose={false}
+              closeOnClick={false}
+              closeButton={false}
+            >
+              <div
+                style={{ minWidth: 270, padding: 12 }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 12 }}>
+                  Thêm địa điểm mới?
+                </div>
+
+                <div style={{ marginBottom: 16 }}>
+                  Tọa độ: {draft.lat}, {draft.lng}
+                </div>
+
+                <div style={{ display: "flex", gap: 12 }}>
+                  <button
+                    onClick={openCreateFormAtPoint}
+                    style={{
+                      flex: 1,
+                      padding: 14,
+                      background: "#2563eb",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Đồng ý
+                  </button>
+
+                  <button
+                    onClick={handleCancelAddLocation}
+                    style={{
+                      flex: 1,
+                      padding: 14,
+                      background: "#f1f5f9",
+                      color: "#334155",
+                      border: "2px solid #e2e8f0",
+                      borderRadius: 12,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Từ chối
+                  </button>
+                </div>
+              </div>
+            </Popup>
+          )}
+
+          {markers.map((m) => (
+            <Marker
+              key={m.id}
+              position={[m.lat, m.lng]}
+              icon={createPlaceIcon(m, selectedMarkerId === m.id)}
+              eventHandlers={{
+                click: () => setSelectedMarkerId(m.id),
               }}
             >
-              <strong>Tọa độ:</strong>
-              <br />
-              {draft.lat}, {draft.lng}
-            </div>
-
-            <div style={{ display: "flex", gap: 10 }}>
-              <button
-                onClick={handleAgreeAddLocation}
-                style={{
-                  padding: "12px 16px",
-                  borderRadius: 12,
-                  border: "none",
-                  background: "#2563eb",
-                  color: "#fff",
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                Đồng ý
-              </button>
-
-              <button
-                onClick={handleCancelAddLocation}
-                style={{
-                  padding: "12px 16px",
-                  borderRadius: 12,
-                  border: "1px solid #cbd5e1",
-                  background: "#fff",
-                  color: "#334155",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                }}
-              >
-                Hủy
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+              <Popup>
+                <PlacePopup
+                  marker={m}
+                  onEdit={startEdit}
+                  onDelete={deleteMarker}
+                />
+              </Popup>
+            </Marker>
+          ))}
+        </MapContainer>
+      </div>
 
       {showForm && (
         <div
           style={{
             position: "absolute",
             inset: 0,
-            background: "rgba(15,23,42,0.35)",
-            zIndex: 2100,
+            background: "rgba(15,23,42,0.5)",
+            zIndex: 2500,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            padding: 16,
+            padding: "16px",
           }}
         >
           <div
+            className="utt-place-form-grid"
             style={{
               width: "100%",
-              maxWidth: 520,
-              maxHeight: "90vh",
-              overflow: "auto",
-              background: "#fff",
-              borderRadius: 20,
-              boxShadow: "0 20px 50px rgba(0,0,0,0.2)",
-              padding: 24,
+              maxWidth: 980,
+              height: "min(88svh, 760px)",
+              background: "#ffffff",
+              borderRadius: 28,
+              border: "3px solid #22c55e",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
+              position: "relative",
+              overflow: "hidden",
             }}
           >
-            <h2 style={{ marginTop: 0, color: "#0f172a" }}>Thông tin địa điểm</h2>
-
-            <input
-              placeholder="Tên quán / địa điểm"
-              value={draft.name}
-              onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
+            <button
+              onClick={resetDraft}
               style={{
-                width: "100%",
-                padding: 14,
-                marginBottom: 10,
-                boxSizing: "border-box",
-                borderRadius: 14,
-                border: "1px solid #cbd5e1",
-                background: "#ffffff",
-                fontSize: 15,
-                outline: "none",
+                position: "absolute",
+                top: 14,
+                right: 18,
+                fontSize: 26,
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                zIndex: 2,
               }}
-            />
+            >
+              ×
+            </button>
 
-            <textarea
-              placeholder="Ghi chú"
-              value={draft.note}
-              onChange={(e) => setDraft((prev) => ({ ...prev, note: e.target.value }))}
+            <div
               style={{
-                width: "100%",
-                padding: 14,
-                marginBottom: 10,
-                minHeight: 100,
-                boxSizing: "border-box",
-                borderRadius: 14,
-                border: "1px solid #cbd5e1",
-                background: "#ffffff",
-                fontSize: 15,
-                outline: "none",
+                padding: "24px 22px 20px",
+                overflowY: "auto",
+                borderRight: "1px solid #e5e7eb",
               }}
-            />
-
-            <StarRatingInput
-              value={draft.rating}
-              onChange={(rating) => setDraft((prev) => ({ ...prev, rating }))}
-            />
-
-            <div style={{ marginBottom: 12 }}>
-              <div
+            >
+              <h2
                 style={{
-                  marginBottom: 8,
-                  fontWeight: 700,
-                  color: "#334155",
-                  fontSize: 18,
                   textAlign: "center",
+                  margin: "0 0 18px",
+                  fontSize: 30,
+                  fontWeight: 800,
+                  color: "#1e293b",
                 }}
               >
-                Logo địa điểm
-              </div>
-              <div style={{ textAlign: "center" }}>
-                <input
-                  ref={logoInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handleLogoUpload}
-                />
-              </div>
-            </div>
+                {isEditing ? "Chỉnh sửa địa điểm" : "Thông tin địa điểm"}
+              </h2>
 
-            {draft.logo ? (
-              <div style={{ marginBottom: 12, textAlign: "center" }}>
-                <img
-                  src={draft.logo}
-                  alt="Logo xem trước"
+              <div
+                style={{
+                  textAlign: "center",
+                  marginBottom: 18,
+                  color: "#64748b",
+                  fontSize: 16,
+                }}
+              >
+                Tọa độ: {draft.lat || "--"}, {draft.lng || "--"}
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <div
                   style={{
-                    width: 90,
-                    height: 90,
-                    objectFit: "cover",
-                    borderRadius: 16,
-                    border: "1px solid #ddd",
-                    boxShadow: "0 8px 20px rgba(0,0,0,0.08)",
+                    fontWeight: 700,
+                    marginBottom: 8,
+                    color: "#1e293b",
+                    background: "#fff",
+                    border: "2px solid #22c55e",
+                    borderRadius: 10,
+                    padding: "6px 14px",
+                    display: "inline-block",
+                  }}
+                >
+                  Loại địa điểm:
+                </div>
+
+                <select
+                  value={draft.category}
+                  onChange={(e) =>
+                    setDraft((p) => ({ ...p, category: e.target.value }))
+                  }
+                  style={{
+                    width: "100%",
+                    padding: "14px 16px",
+                    borderRadius: 14,
+                    border: "1px solid #cbd5e1",
+                    fontSize: 16,
+                  }}
+                >
+                  {categories.map((cat) => (
+                    <option key={cat.value} value={cat.value}>
+                      {cat.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <div
+                  style={{
+                    fontWeight: 700,
+                    marginBottom: 8,
+                    color: "#1e293b",
+                    background: "#fff",
+                    border: "2px solid #22c55e",
+                    borderRadius: 10,
+                    padding: "6px 14px",
+                    display: "inline-block",
+                  }}
+                >
+                  Tên quán / địa điểm:
+                </div>
+
+                <input
+                  placeholder="Nhập tên quán hoặc địa điểm"
+                  value={draft.name}
+                  onChange={(e) =>
+                    setDraft((p) => ({ ...p, name: e.target.value }))
+                  }
+                  style={{
+                    width: "100%",
+                    padding: "14px 16px",
+                    borderRadius: 14,
+                    border: "1px solid #cbd5e1",
+                    fontSize: 16,
                   }}
                 />
               </div>
-            ) : null}
 
-            <input
-              placeholder="Vĩ độ"
-              value={draft.lat}
-              readOnly
+              <div style={{ marginBottom: 18 }}>
+                <div
+                  style={{
+                    fontWeight: 700,
+                    marginBottom: 8,
+                    color: "#1e293b",
+                    background: "#fff",
+                    border: "2px solid #22c55e",
+                    borderRadius: 10,
+                    padding: "6px 14px",
+                    display: "inline-block",
+                  }}
+                >
+                  Ghi chú:
+                </div>
+
+                <textarea
+                  placeholder="Mô tả thêm về địa điểm..."
+                  value={draft.note}
+                  onChange={(e) =>
+                    setDraft((p) => ({ ...p, note: e.target.value }))
+                  }
+                  style={{
+                    width: "100%",
+                    minHeight: 130,
+                    padding: "14px 16px",
+                    borderRadius: 14,
+                    border: "1px solid #cbd5e1",
+                    fontSize: 16,
+                    resize: "vertical",
+                  }}
+                />
+              </div>
+
+              <StarRatingInput
+                value={draft.rating}
+                onChange={(r) => setDraft((p) => ({ ...p, rating: r }))}
+              />
+
+              <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
+                <button
+                  onClick={saveMarker}
+                  style={{
+                    flex: 1,
+                    padding: "15px",
+                    background: "#2563eb",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 12,
+                    fontWeight: 700,
+                    fontSize: 16,
+                    cursor: "pointer",
+                  }}
+                >
+                  {isEditing ? "Cập nhật địa điểm" : "Lưu địa điểm"}
+                </button>
+
+                <button
+                  onClick={resetDraft}
+                  style={{
+                    flex: 1,
+                    padding: "15px",
+                    background: "#fff",
+                    color: "#334155",
+                    border: "2px solid #e2e8f0",
+                    borderRadius: 12,
+                    fontWeight: 600,
+                    fontSize: 16,
+                    cursor: "pointer",
+                  }}
+                >
+                  Hủy
+                </button>
+              </div>
+            </div>
+
+            <div
               style={{
-                width: "100%",
-                padding: 14,
-                marginBottom: 10,
-                background: "#ffffff",
-                color: "#000000",
-                WebkitTextFillColor: "#000000",
-                opacity: 1,
-                boxSizing: "border-box",
-                borderRadius: 14,
-                border: "1px solid #cbd5e1",
-                fontSize: 16,
-                fontWeight: 600,
+                padding: "24px 20px 20px",
+                overflowY: "auto",
+                background: "#f8fafc",
               }}
-            />
-
-            <input
-              placeholder="Kinh độ"
-              value={draft.lng}
-              readOnly
-              style={{
-                width: "100%",
-                padding: 14,
-                marginBottom: 14,
-                background: "#ffffff",
-                color: "#000000",
-                WebkitTextFillColor: "#000000",
-                opacity: 1,
-                boxSizing: "border-box",
-                borderRadius: 14,
-                border: "1px solid #cbd5e1",
-                fontSize: 16,
-                fontWeight: 600,
-              }}
-            />
-
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                onClick={addMarker}
+            >
+              <div
                 style={{
-                  padding: "12px 16px",
-                  cursor: "pointer",
-                  borderRadius: 12,
-                  border: "none",
-                  background: "#2563eb",
-                  color: "#fff",
-                  fontWeight: 700,
+                  fontSize: 24,
+                  fontWeight: 800,
+                  color: "#1e293b",
+                  marginBottom: 14,
                 }}
               >
-                Lưu địa điểm
-              </button>
+                Ảnh / video địa điểm
+              </div>
 
-              <button
-                onClick={resetDraft}
+              <div
                 style={{
-                  padding: "12px 16px",
-                  cursor: "pointer",
-                  borderRadius: 12,
-                  border: "1px solid #cbd5e1",
-                  background: "#ffffff",
-                  color: "#334155",
-                  fontWeight: 600,
+                  fontSize: 14,
+                  color: "#64748b",
+                  lineHeight: 1.6,
+                  marginBottom: 16,
                 }}
               >
-                Hủy
-              </button>
+                Bạn có thể thêm nhiều ảnh hoặc video để minh họa cho địa điểm này.
+              </div>
+
+              <label
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 12,
+                  background: "#e2fbe8",
+                  padding: "10px 16px",
+                  borderRadius: 12,
+                  cursor: "pointer",
+                  flexWrap: "wrap",
+                  marginBottom: 16,
+                }}
+              >
+                <input
+                  type="file"
+                  accept="image/*,video/*"
+                  multiple
+                  ref={mediaInputRef}
+                  onChange={handleMediaUpload}
+                  style={{ display: "none" }}
+                />
+                <span
+                  style={{
+                    background: "#16a34a",
+                    color: "#fff",
+                    padding: "8px 16px",
+                    borderRadius: 10,
+                    fontSize: 14,
+                    fontWeight: 700,
+                  }}
+                >
+                  Chọn media
+                </span>
+
+                <span style={{ color: "#475569", fontSize: 14 }}>
+                  {draft.media?.length
+                    ? `${draft.media.length} media đã chọn`
+                    : "Chưa có media"}
+                </span>
+              </label>
+
+              {draft.media?.length > 0 ? (
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
+                    gap: 12,
+                  }}
+                >
+                  {draft.media.map((item) => (
+                    <div
+                      key={item.id}
+                      style={{
+                        background: "#fff",
+                        border: "1px solid #e5e7eb",
+                        borderRadius: 16,
+                        padding: 8,
+                        boxShadow: "0 6px 18px rgba(15,23,42,0.06)",
+                      }}
+                    >
+                      <MediaPreviewItem item={item} onRemove={removeDraftMedia} />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div
+                  style={{
+                    border: "2px dashed #cbd5e1",
+                    borderRadius: 18,
+                    padding: "28px 18px",
+                    background: "#fff",
+                    textAlign: "center",
+                    color: "#64748b",
+                  }}
+                >
+                  <div style={{ fontSize: 36, marginBottom: 8 }}>🖼️</div>
+
+                  <div
+                    style={{
+                      fontWeight: 700,
+                      color: "#334155",
+                      marginBottom: 6,
+                    }}
+                  >
+                    Chưa có media nào
+                  </div>
+
+                  <div style={{ fontSize: 14 }}>
+                    Hãy thêm ảnh hoặc video ở cột bên phải để địa điểm sinh động hơn.
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      <div style={{ height: "100%", width: "100%" }}>
-        <MapContainer
-          center={defaultCenter}
-          zoom={13}
-          maxBounds={mapBounds}
-          maxBoundsViscosity={1.0}
+      {message && (
+        <div
           style={{
-            height: "100%",
-            width: "100%",
+            position: "absolute",
+            bottom: 24,
+            left: 24,
+            background: "#1e2937",
+            color: "#fff",
+            padding: "10px 20px",
+            borderRadius: 9999,
+            fontSize: 14.5,
+            boxShadow: "0 8px 25px rgba(0,0,0,0.25)",
+            zIndex: 3000,
           }}
         >
-          <TileLayer
-            attribution="&copy; OpenStreetMap contributors"
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-
-          <Circle
-            center={defaultCenter}
-            radius={radiusInMeters}
-            pathOptions={{ color: "#2563eb", fillColor: "#3b82f6", fillOpacity: 0.08 }}
-          />
-
-          <MapClickHandler onMapPointClick={handleMapPointClick} />
-
-          <FlyToMarker target={selectedMarker} />
-
-          {tempPoint ? (
-            <Marker position={tempPoint}>
-              <Popup>Vị trí đang chọn</Popup>
-            </Marker>
-          ) : null}
-
-          {markers.map((m) => (
-            <Marker key={m.id} position={[m.lat, m.lng]} icon={createPlaceIcon(m)}>
-              <Popup>
-                <div style={{ width: 220 }}>
-                  <strong>{m.name}</strong>
-                  <br />
-
-                  {m.logo ? (
-                    <img
-                      src={m.logo}
-                      alt={m.name}
-                      style={{
-                        width: 72,
-                        height: 72,
-                        objectFit: "cover",
-                        borderRadius: 14,
-                        margin: "8px 0",
-                        border: "1px solid #ddd",
-                      }}
-                    />
-                  ) : null}
-
-                  <div style={{ color: "#f59e0b", margin: "6px 0", fontSize: 18 }}>
-                    {m.rating ? (
-                      renderStars(m.rating)
-                    ) : (
-                      <span style={{ color: "#888", fontSize: 14 }}>Chưa đánh giá</span>
-                    )}
-                  </div>
-
-                  {m.rating ? (
-                    <div style={{ color: "#666", fontSize: 14, marginBottom: 8 }}>
-                      {m.rating}/5 - {getRatingLabel(m.rating)}
-                    </div>
-                  ) : null}
-
-                  <div>{m.note}</div>
-                  <small>
-                    {m.lat}, {m.lng}
-                  </small>
-                </div>
-              </Popup>
-            </Marker>
-          ))}
-        </MapContainer>
-      </div>
+          {message}
+        </div>
+      )}
     </div>
   );
 }
