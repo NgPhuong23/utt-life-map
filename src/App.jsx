@@ -1410,6 +1410,99 @@ function PlacePopup({
   );
 }
 
+function MemberCard({ user, onPromote, onDemote }) {
+  const isElevated = user.role === "moderator" || user.role === "admin";
+  const isAdminAccount = user.role === "admin";
+
+  return (
+    <div
+      style={{
+        padding: 16,
+        marginBottom: 12,
+        border: "1px solid #e5e7eb",
+        borderRadius: 18,
+        background: "#fff",
+      }}
+    >
+      <div
+        style={{
+          fontWeight: 800,
+          fontSize: 16,
+          color: "#0f172a",
+        }}
+      >
+        {user.username || "Chưa có username"}
+      </div>
+
+      <div style={{ marginTop: 4, fontSize: 13, color: "#64748b" }}>
+        {user.email || "Không có email"}
+      </div>
+
+      <div style={{ marginTop: 6, fontSize: 13, color: "#475569" }}>
+        Vai trò hiện tại: <strong>{user.role || "user"}</strong>
+      </div>
+
+      <div
+        style={{
+          marginTop: 12,
+          display: "flex",
+          gap: 8,
+          flexWrap: "wrap",
+        }}
+      >
+        {!isElevated && (
+          <button
+            onClick={() => onPromote(user.id)}
+            style={{
+              padding: "10px 12px",
+              background: "#2563eb",
+              color: "#fff",
+              border: "none",
+              borderRadius: 10,
+              cursor: "pointer",
+              fontWeight: 700,
+            }}
+          >
+            Cấp Moderator
+          </button>
+        )}
+
+        {user.role === "moderator" && (
+          <button
+            onClick={() => onDemote(user.id)}
+            style={{
+              padding: "10px 12px",
+              background: "#f59e0b",
+              color: "#fff",
+              border: "none",
+              borderRadius: 10,
+              cursor: "pointer",
+              fontWeight: 700,
+            }}
+          >
+            Hạ về User
+          </button>
+        )}
+
+        {isAdminAccount && (
+          <div
+            style={{
+              padding: "10px 12px",
+              background: "#f8fafc",
+              color: "#475569",
+              border: "1px solid #cbd5e1",
+              borderRadius: 10,
+              fontWeight: 700,
+            }}
+          >
+            Admin gốc
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // =========================
 // App chính
 // =========================
@@ -1454,6 +1547,7 @@ export default function App() {
   const [reviewSaving, setReviewSaving] = useState(false);
 
   const [searchTerm, setSearchTerm] = useState("");
+  const [memberSearchTerm, setMemberSearchTerm] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [sortBy, setSortBy] = useState("newest");
 
@@ -1536,6 +1630,29 @@ export default function App() {
 
     return list;
   }, [markers, searchTerm, categoryFilter, sortBy, markerStatsMap]);
+
+  const filteredMembers = useMemo(() => {
+    const keyword = memberSearchTerm.trim().toLowerCase();
+
+    return members.filter((u) => {
+      const username = String(u.username || "").toLowerCase();
+      const email = String(u.email || "").toLowerCase();
+
+      return !keyword || username.includes(keyword) || email.includes(keyword);
+    });
+  }, [members, memberSearchTerm]);
+
+  const elevatedMembers = useMemo(() => {
+    return filteredMembers.filter(
+      (u) => u.role === "moderator" || u.role === "admin"
+    );
+  }, [filteredMembers]);
+
+  const normalMembers = useMemo(() => {
+    return filteredMembers.filter(
+      (u) => !u.role || u.role === "user"
+    );
+  }, [filteredMembers]);
 
   const totalStats = useMemo(() => {
     const ratedMarkers = markers.filter(
@@ -2280,8 +2397,29 @@ export default function App() {
       return;
     }
 
+    const targetUser = members.find((u) => u.id === userId);
+
+    if (!targetUser) {
+      showMessage("❌ Không tìm thấy tài khoản");
+      return;
+    }
+
+    if (targetUser.role === "admin") {
+      showMessage("ℹ️ Tài khoản này là Admin, không thể cấp lại");
+      return;
+    }
+
+    if (targetUser.role === "moderator") {
+      showMessage("ℹ️ Tài khoản này đã là Moderator");
+      return;
+    }
+
     try {
-      await updateDoc(doc(db, "users", userId), { role: "moderator" });
+      await updateDoc(doc(db, "users", userId), {
+        role: "moderator",
+        updatedAt: serverTimestamp(),
+      });
+
       showMessage("✅ Đã chuyển thành Moderator");
     } catch (error) {
       console.error("Set moderator error:", error);
@@ -2295,8 +2433,29 @@ export default function App() {
       return;
     }
 
+    const targetUser = members.find((u) => u.id === userId);
+
+    if (!targetUser) {
+      showMessage("❌ Không tìm thấy tài khoản");
+      return;
+    }
+
+    if (targetUser.role === "admin") {
+      showMessage("❌ Không thể hạ quyền Admin");
+      return;
+    }
+
+    if (targetUser.role !== "moderator") {
+      showMessage("ℹ️ Tài khoản này hiện không phải Moderator");
+      return;
+    }
+
     try {
-      await updateDoc(doc(db, "users", userId), { role: "user" });
+      await updateDoc(doc(db, "users", userId), {
+        role: "user",
+        updatedAt: serverTimestamp(),
+      });
+
       showMessage("✅ Đã hạ về User");
     } catch (error) {
       console.error("Remove moderator error:", error);
@@ -2835,19 +2994,20 @@ export default function App() {
                 gap: 12,
               }}
             >
-              <div>
-                <div
-                  style={{
-                    fontSize: 26,
-                    fontWeight: 800,
-                    color: "#1e293b",
-                  }}
-                >
-                  Danh sách địa điểm
-                </div>
+              <div
+                style={{
+                  fontSize: 26,
+                  fontWeight: 800,
+                  color: "#1e293b",
+                }}
+              >
+                {activeTab === "members" ? "Quản lý thành viên" : "Danh sách địa điểm"}
+              </div>
 
                 <div style={{ color: "#64748b", fontSize: 14 }}>
-                  {filteredMarkers.length} / {markers.length} địa điểm
+                  {activeTab === "members"
+                    ? `${filteredMembers.length} / ${members.length} thành viên`
+                    : `${filteredMarkers.length} / ${markers.length} địa điểm`}
                 </div>
 
                 <div style={{ color: "#64748b", fontSize: 13, marginTop: 4 }}>
@@ -2995,6 +3155,105 @@ export default function App() {
                   )}
                 </>
               )}
+
+              {activeTab === "members" ? (
+                !isAdmin ? (
+                  <p style={{ textAlign: "center", color: "#64748b", padding: 30 }}>
+                    Bạn không có quyền truy cập mục này
+                  </p>
+                ) : filteredMembers.length === 0 ? (
+                  <p style={{ textAlign: "center", color: "#64748b", padding: 30 }}>
+                    Không tìm thấy thành viên phù hợp
+                  </p>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                    <div>
+                      <div
+                        style={{
+                          marginBottom: 12,
+                          fontSize: 18,
+                          fontWeight: 800,
+                          color: "#0f172a",
+                        }}
+                      >
+                        Quản trị viên
+                      </div>
+
+                      <div style={{ marginBottom: 10, fontSize: 13, color: "#64748b" }}>
+                        Hiển thị những người đã được nâng cấp quyền hạn
+                      </div>
+
+                      {elevatedMembers.length === 0 ? (
+                        <div
+                          style={{
+                            padding: 16,
+                            border: "1px dashed #cbd5e1",
+                            borderRadius: 16,
+                            background: "#f8fafc",
+                            color: "#64748b",
+                          }}
+                        >
+                          Chưa có ai được nâng quyền
+                        </div>
+                      ) : (
+                        elevatedMembers.map((u) => (
+                          <MemberCard
+                            key={u.id}
+                            user={u}
+                            onPromote={setModerator}
+                            onDemote={removeModerator}
+                          />
+                        ))
+                      )}
+                    </div>
+
+                    <div>
+                      <div
+                        style={{
+                          marginBottom: 12,
+                          fontSize: 18,
+                          fontWeight: 800,
+                          color: "#0f172a",
+                        }}
+                      >
+                        User
+                      </div>
+
+                      <div style={{ marginBottom: 10, fontSize: 13, color: "#64748b" }}>
+                        Hiển thị các tài khoản user chưa được nâng cấp quyền hạn
+                      </div>
+
+                      {normalMembers.length === 0 ? (
+                        <div
+                          style={{
+                            padding: 16,
+                            border: "1px dashed #cbd5e1",
+                            borderRadius: 16,
+                            background: "#f8fafc",
+                            color: "#64748b",
+                          }}
+                        >
+                          Không còn user nào trong danh sách này
+                        </div>
+                      ) : (
+                        normalMembers.map((u) => (
+                          <MemberCard
+                            key={u.id}
+                            user={u}
+                            onPromote={setModerator}
+                            onDemote={removeModerator}
+                          />
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )
+              ) : filteredMarkers.length === 0 ? (
+                ...
+              ) : (
+                ...
+              )}
+
             </div>
 
             <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
