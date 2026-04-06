@@ -20,6 +20,7 @@ import {
   query,
   serverTimestamp,
   updateDoc,
+  where,
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { useAuthCtx } from "./context/AuthContext";
@@ -221,6 +222,59 @@ function StarRatingInput({ value, onChange }) {
   );
 }
 
+function UserRatingBox({ currentValue, onRate, disabled }) {
+  const [hoverValue, setHoverValue] = useState(0);
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div
+        style={{
+          fontSize: 14,
+          fontWeight: 700,
+          color: "#1e293b",
+          marginBottom: 8,
+        }}
+      >
+        Đánh giá của bạn
+      </div>
+
+      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        {[1, 2, 3, 4, 5].map((star) => {
+          const active = hoverValue ? star <= hoverValue : star <= currentValue;
+
+          return (
+            <button
+              key={star}
+              type="button"
+              disabled={disabled}
+              onClick={() => onRate(star)}
+              onMouseEnter={() => !disabled && setHoverValue(star)}
+              onMouseLeave={() => !disabled && setHoverValue(0)}
+              style={{
+                background: "none",
+                border: "none",
+                fontSize: 28,
+                lineHeight: 1,
+                cursor: disabled ? "not-allowed" : "pointer",
+                color: active ? "#f59e0b" : "#d1d5db",
+                padding: 0,
+              }}
+            >
+              ★
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={{ marginTop: 6, fontSize: 13, color: "#64748b" }}>
+        {currentValue > 0
+          ? `Bạn đã chấm ${currentValue}/5`
+          : "Bạn chưa chấm điểm"}
+      </div>
+    </div>
+  );
+}
+
 function MapClickHandler({ onMapPointClick }) {
   useMapEvents({
     click(e) {
@@ -320,7 +374,16 @@ function MediaPreviewItem({ item, onRemove }) {
   );
 }
 
-function PlacePopup({ marker, onEdit, onDelete, canEditMap }) {
+function PlacePopup({
+  marker,
+  onEdit,
+  onDelete,
+  canEditMap,
+  isLoggedIn,
+  myRating,
+  onRatePlace,
+  ratingLoading,
+}) {
   return (
     <div style={{ width: 280, color: "#0f172a" }}>
       <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
@@ -357,8 +420,13 @@ function PlacePopup({ marker, onEdit, onDelete, canEditMap }) {
           </div>
 
           {marker.rating > 0 && (
-            <div style={{ marginTop: 6, color: "#f59e0b", fontSize: 18 }}>
-              {renderStars(marker.rating)}
+            <div style={{ marginTop: 6 }}>
+              <div style={{ color: "#f59e0b", fontSize: 18 }}>
+                {renderStars(marker.rating)}
+              </div>
+              <div style={{ marginTop: 4, fontSize: 13, color: "#64748b" }}>
+                Trung bình: {Number(marker.rating).toFixed(1)}/5
+              </div>
             </div>
           )}
         </div>
@@ -437,6 +505,30 @@ function PlacePopup({ marker, onEdit, onDelete, canEditMap }) {
         {marker.createdByName && <div>Người thêm: {marker.createdByName}</div>}
       </div>
 
+      {isLoggedIn && (
+        <UserRatingBox
+          currentValue={myRating || 0}
+          onRate={onRatePlace}
+          disabled={ratingLoading}
+        />
+      )}
+
+      {!isLoggedIn && (
+        <div
+          style={{
+            marginTop: 14,
+            fontSize: 13,
+            color: "#64748b",
+            background: "#f8fafc",
+            border: "1px solid #e5e7eb",
+            borderRadius: 10,
+            padding: "10px 12px",
+          }}
+        >
+          Đăng nhập để đánh giá địa điểm này
+        </div>
+      )}
+
       {canEditMap && (
         <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
           <button
@@ -494,8 +586,25 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("places");
   const [members, setMembers] = useState([]);
   const [markers, setMarkers] = useState([]);
+  const [ratings, setRatings] = useState([]);
+  const [ratingLoading, setRatingLoading] = useState(false);
 
-  const displayMarkers = useMemo(() => markers, [markers]);
+  const displayMarkers = useMemo(() => {
+    return markers.map((marker) => {
+      const markerRatings = ratings.filter((r) => r.markerId === marker.id);
+      const avg =
+        markerRatings.length > 0
+          ? markerRatings.reduce((sum, r) => sum + (Number(r.value) || 0), 0) /
+            markerRatings.length
+          : 0;
+
+      return {
+        ...marker,
+        rating: Number(avg.toFixed(1)),
+        ratingCount: markerRatings.length,
+      };
+    });
+  }, [markers, ratings]);
 
   const [draft, setDraft] = useState(emptyDraft);
   const [message, setMessage] = useState("");
@@ -602,6 +711,24 @@ export default function App() {
       }
     );
 
+    useEffect(() => {
+      const unsub = onSnapshot(
+        collection(db, "ratings"),
+        (snapshot) => {
+          const list = snapshot.docs.map((item) => ({
+            id: item.id,
+            ...item.data(),
+          }));
+          setRatings(list);
+        },
+        (error) => {
+          console.error("Ratings snapshot error:", error);
+        }
+      );
+
+      return () => unsub();
+    }, []);
+
     return () => unsub();
   }, []);
 
@@ -675,7 +802,7 @@ export default function App() {
   const filteredMarkers = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
 
-    const list = markers.filter((m) => {
+    const list = displayMarkers.filter((m) => {
       const matchSearch =
         !keyword ||
         m.name.toLowerCase().includes(keyword) ||
@@ -696,23 +823,34 @@ export default function App() {
     }
 
     return list;
-  }, [markers, searchTerm, categoryFilter, sortBy]);
+  }, [displayMarkers, searchTerm, categoryFilter, sortBy]);
 
   const totalStats = useMemo(() => {
-    const ratedCount = markers.filter((m) => m.rating > 0).length;
+    const ratedMarkers = displayMarkers.filter((m) => m.rating > 0);
     const avgRating =
-      ratedCount > 0
+      ratedMarkers.length > 0
         ? (
-            markers.reduce((sum, m) => sum + (m.rating || 0), 0) / ratedCount
+            ratedMarkers.reduce((sum, m) => sum + (m.rating || 0), 0) /
+            ratedMarkers.length
           ).toFixed(1)
         : "0.0";
 
     return {
-      total: markers.length,
-      ratedCount,
+      total: displayMarkers.length,
+      ratedCount: ratedMarkers.length,
       avgRating,
     };
-  }, [markers]);
+  }, [displayMarkers]);
+
+  const getMyRatingForMarker = (markerId) => {
+    if (!firebaseUser) return 0;
+
+    const found = ratings.find(
+      (r) => r.markerId === markerId && r.userId === firebaseUser.uid
+    );
+
+    return found ? Number(found.value) || 0 : 0;
+  };
 
   const requireEditPermission = () => {
     if (!isLoggedIn) {
@@ -931,6 +1069,44 @@ export default function App() {
     }
   };
 
+  const ratePlace = async (markerId, value) => {
+    if (!isLoggedIn) {
+      setShowAuthModal(true);
+      showMessage("❌ Hãy đăng nhập để đánh giá");
+      return;
+    }
+
+    try {
+      setRatingLoading(true);
+
+      const existing = ratings.find(
+        (r) => r.markerId === markerId && r.userId === firebaseUser.uid
+      );
+
+      if (existing) {
+        await updateDoc(doc(db, "ratings", existing.id), {
+          value,
+          updatedAt: serverTimestamp(),
+        });
+        showMessage("✅ Đã cập nhật đánh giá");
+      } else {
+        await addDoc(collection(db, "ratings"), {
+          markerId,
+          userId: firebaseUser.uid,
+          value,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        showMessage("✅ Đã gửi đánh giá");
+      }
+    } catch (error) {
+      console.error("Rate place error:", error);
+      showMessage("❌ Không gửi được đánh giá");
+    } finally {
+      setRatingLoading(false);
+    }
+  };
+
   const focusMarker = (marker) => {
     setSelectedMarkerId(marker.id);
     setShowMenu(false);
@@ -1026,138 +1202,143 @@ export default function App() {
         overflow: "hidden",
       }}
     >
-      <button
-        onClick={() => setShowMenu((prev) => !prev)}
-        style={{
-          position: "absolute",
-          top: 16,
-          left: 16,
-          zIndex: 2000,
-          width: 52,
-          height: 52,
-          borderRadius: 14,
-          border: "none",
-          background: "#fff",
-          boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
-          fontSize: 26,
-          cursor: "pointer",
-        }}
-        title="Mở menu"
-      >
-        ☰
-      </button>
+    
+      {!showMenu && (
+        <>
+          <button
+            onClick={() => setShowMenu((prev) => !prev)}
+            style={{
+              position: "absolute",
+              top: 16,
+              left: 16,
+              zIndex: 2000,
+              width: 52,
+              height: 52,
+              borderRadius: 14,
+              border: "none",
+              background: "#fff",
+              boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
+              fontSize: 26,
+              cursor: "pointer",
+            }}
+            title="Mở menu"
+          >
+            ☰
+          </button>
 
-      <button
-        onClick={goToMyLocation}
-        style={{
-          position: "absolute",
-          top: 16,
-          left: 80,
-          zIndex: 2000,
-          width: 52,
-          height: 52,
-          borderRadius: 14,
-          border: "none",
-          background: "#fff",
-          boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
-          fontSize: 24,
-          cursor: "pointer",
-        }}
-        title="Vị trí của tôi"
-      >
-        📍
-      </button>
+          <button
+            onClick={goToMyLocation}
+            style={{
+              position: "absolute",
+              top: 16,
+              left: 80,
+              zIndex: 2000,
+              width: 52,
+              height: 52,
+              borderRadius: 14,
+              border: "none",
+              background: "#fff",
+              boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
+              fontSize: 24,
+              cursor: "pointer",
+            }}
+            title="Vị trí của tôi"
+          >
+            📍
+          </button>
 
-      {!isLoggedIn ? (
-        <button
-          onClick={() => setShowAuthModal(true)}
-          style={{
-            position: "absolute",
-            top: 16,
-            left: 144,
-            zIndex: 2000,
-            width: 52,
-            height: 52,
-            borderRadius: 14,
-            border: "none",
-            background: "#fff",
-            boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
-            fontSize: 24,
-            cursor: "pointer",
-          }}
-          title="Đăng nhập"
-        >
-          👤
-        </button>
-      ) : (
-        <button
-          onClick={logout}
-          style={{
-            position: "absolute",
-            top: 16,
-            left: 144,
-            zIndex: 2000,
-            width: 52,
-            height: 52,
-            borderRadius: 14,
-            border: "none",
-            background: "#fff",
-            boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
-            fontSize: 24,
-            cursor: "pointer",
-          }}
-          title="Đăng xuất"
-        >
-          ↩
-        </button>
+          {!isLoggedIn ? (
+            <button
+              onClick={() => setShowAuthModal(true)}
+              style={{
+                position: "absolute",
+                top: 16,
+                left: 144,
+                zIndex: 2000,
+                width: 52,
+                height: 52,
+                borderRadius: 14,
+                border: "none",
+                background: "#fff",
+                boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
+                fontSize: 24,
+                cursor: "pointer",
+              }}
+              title="Đăng nhập"
+            >
+              👤
+            </button>
+          ) : (
+            <button
+              onClick={logout}
+              style={{
+                position: "absolute",
+                top: 16,
+                left: 144,
+                zIndex: 2000,
+                width: 52,
+                height: 52,
+                borderRadius: 14,
+                border: "none",
+                background: "#fff",
+                boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
+                fontSize: 24,
+                cursor: "pointer",
+              }}
+              title="Đăng xuất"
+            >
+              ↩
+            </button>
+          )}
+
+          <div
+            style={{
+              position: "absolute",
+              top: 16,
+              left: 210,
+              zIndex: 1000,
+              background: "rgba(255,255,255,0.98)",
+              padding: "12px 20px",
+              borderRadius: 18,
+              boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
+              border: "1px solid #e5e7eb",
+              backdropFilter: "blur(8px)",
+              textAlign: "left",
+            }}
+          >
+            <h1
+              style={{
+                margin: 0,
+                fontSize: 30,
+                fontWeight: 900,
+                color: "#0f172a",
+                lineHeight: 1.1,
+              }}
+            >
+              UTT Life Map
+            </h1>
+
+            <div
+              style={{
+                marginTop: 6,
+                display: "flex",
+                gap: 10,
+                flexWrap: "wrap",
+                fontSize: 13,
+                color: "#475569",
+              }}
+            >
+              <span>📍 {totalStats.total} địa điểm</span>
+              <span>⭐ {totalStats.avgRating}/5</span>
+              <span>📝 {totalStats.ratedCount} địa điểm đã đánh giá</span>
+              <span>
+                👤 {isLoggedIn ? profile?.username || firebaseUser?.email : "Khách"}
+              </span>
+              <span>🛡️ {isLoggedIn ? role : "guest"}</span>
+            </div>
+          </div>
+        </>
       )}
-
-      <div
-        style={{
-          position: "absolute",
-          top: 16,
-          left: 210,
-          zIndex: 1000,
-          background: "rgba(255,255,255,0.98)",
-          padding: "12px 20px",
-          borderRadius: 18,
-          boxShadow: "0 10px 30px rgba(0,0,0,0.15)",
-          border: "1px solid #e5e7eb",
-          backdropFilter: "blur(8px)",
-          textAlign: "left",
-        }}
-      >
-        <h1
-          style={{
-            margin: 0,
-            fontSize: 30,
-            fontWeight: 900,
-            color: "#0f172a",
-            lineHeight: 1.1,
-          }}
-        >
-          UTT Life Map
-        </h1>
-
-        <div
-          style={{
-            marginTop: 6,
-            display: "flex",
-            gap: 10,
-            flexWrap: "wrap",
-            fontSize: 13,
-            color: "#475569",
-          }}
-        >
-          <span>📍 {totalStats.total} địa điểm</span>
-          <span>⭐ {totalStats.avgRating}/5</span>
-          <span>📝 {totalStats.ratedCount} địa điểm đã đánh giá</span>
-          <span>
-            👤 {isLoggedIn ? profile?.username || firebaseUser?.email : "Khách"}
-          </span>
-          <span>🛡️ {isLoggedIn ? role : "guest"}</span>
-        </div>
-      </div>
 
       {showMenu && (
         <>
@@ -1796,6 +1977,10 @@ export default function App() {
                   onEdit={startEdit}
                   onDelete={deleteMarker}
                   canEditMap={canEditMap}
+                  isLoggedIn={isLoggedIn}
+                  myRating={getMyRatingForMarker(m.id)}
+                  onRatePlace={(value) => ratePlace(m.id, value)}
+                  ratingLoading={ratingLoading}
                 />
               </Popup>
             </Marker>
