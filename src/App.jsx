@@ -159,7 +159,7 @@ function getAvatarSource(profile, firebaseUser) {
   return profile?.avatar || profile?.photoURL || firebaseUser?.photoURL || "";
 }
 
-function createPlaceIcon(place, isActive = false) {
+function createPlaceIcon(place, zoom = 13, isActive = false) {
   const safeName = (place.name || "Địa điểm").replace(
     /[<>&"]/g,
     (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c])
@@ -172,47 +172,70 @@ function createPlaceIcon(place, isActive = false) {
     ? "0 0 0 5px rgba(37,99,235,0.22), 0 10px 24px rgba(0,0,0,0.28)"
     : "0 2px 8px rgba(0,0,0,0.25)";
 
+  // size theo zoom
+  const circleSize =
+    zoom >= 16 ? 50 :
+    zoom >= 15 ? 46 :
+    zoom >= 14 ? 42 :
+    zoom >= 13 ? 38 :
+    zoom >= 12 ? 34 :
+    30;
+
+  const emojiSize =
+    zoom >= 16 ? 24 :
+    zoom >= 15 ? 22 :
+    zoom >= 14 ? 20 :
+    zoom >= 13 ? 18 :
+    zoom >= 12 ? 16 :
+    14;
+
+  const showLabel = zoom >= 14;
+
+  const labelHtml = showLabel
+    ? `
+      <div style="
+        margin-top:6px;
+        background:#ffffff;
+        padding:4px 8px;
+        border-radius:999px;
+        font-size:11px;
+        font-weight:600;
+        color:#111827;
+        box-shadow:0 2px 8px rgba(0,0,0,0.18);
+        white-space:nowrap;
+        max-width:130px;
+        overflow:hidden;
+        text-overflow:ellipsis;
+      ">
+        ${safeName}
+      </div>
+    `
+    : "";
+
   return L.divIcon({
     className: "",
     html: `
-      <div style="display:flex;flex-direction:column;align-items:center;transform:translateY(-8px);">
+      <div style="display:flex;flex-direction:column;align-items:center;">
         <div style="
-          width:46px;
-          height:46px;
+          width:${circleSize}px;
+          height:${circleSize}px;
           border-radius:999px;
           background:${categoryInfo.color};
           color:white;
           display:flex;
           align-items:center;
           justify-content:center;
-          font-size:24px;
-          font-weight:700;
+          font-size:${emojiSize}px;
           border:3px solid #fff;
           box-shadow:${glow};
         ">
           ${emoji}
         </div>
-        <div style="
-          margin-top:6px;
-          background:#ffffff;
-          padding:4px 9px;
-          border-radius:999px;
-          font-size:12px;
-          font-weight:600;
-          color:#111827;
-          box-shadow:0 2px 8px rgba(0,0,0,0.18);
-          white-space:nowrap;
-          max-width:155px;
-          overflow:hidden;
-          text-overflow:ellipsis;
-          border:1px solid #e5e7eb;
-        ">
-          ${safeName}
-        </div>
-      </div>`,
-    iconSize: [155, 74],
-    iconAnchor: [23, 58],
-    popupAnchor: [0, -50],
+        ${labelHtml}
+      </div>
+    `,
+    iconSize: [circleSize, circleSize + 30],
+    iconAnchor: [circleSize / 2, circleSize],
   });
 }
 
@@ -266,23 +289,46 @@ async function fileToBase64Media(file) {
 }
 
 function resolveFinalCoords(draft) {
-  const exactLat = safeNumber(draft.exactLat);
-  const exactLng = safeNumber(draft.exactLng);
+  const clickedLat = safeNumber(draft.lat);
+  const clickedLng = safeNumber(draft.lng);
 
-  if (exactLat !== null && exactLng !== null) {
+  const rawExactLat = String(draft.exactLat ?? "").trim();
+  const rawExactLng = String(draft.exactLng ?? "").trim();
+
+  const hasExactLat = rawExactLat !== "";
+  const hasExactLng = rawExactLng !== "";
+
+  // Chỉ khi nhập đủ cả 2 ô thì mới dùng tọa độ chính xác
+  if (hasExactLat && hasExactLng) {
+    const exactLat = safeNumber(rawExactLat);
+    const exactLng = safeNumber(rawExactLng);
+
+    if (exactLat === null || exactLng === null) {
+      return {
+        lat: null,
+        lng: null,
+        exactLat: null,
+        exactLng: null,
+        error: "Tọa độ chính xác không hợp lệ",
+      };
+    }
+
     return {
       lat: exactLat,
       lng: exactLng,
       exactLat,
       exactLng,
+      error: null,
     };
   }
 
+  // Nếu chỉ nhập 1 ô thì bỏ qua luôn, vẫn dùng tọa độ click ban đầu
   return {
-    lat: safeNumber(draft.lat),
-    lng: safeNumber(draft.lng),
+    lat: clickedLat,
+    lng: clickedLng,
     exactLat: null,
     exactLng: null,
+    error: null,
   };
 }
 
@@ -420,6 +466,25 @@ function FixMapSize() {
   return null;
 }
 
+function ZoomTracker({ onZoomChange }) {
+  const map = useMap();
+
+  useEffect(() => {
+    const updateZoom = () => {
+      onZoomChange(map.getZoom());
+    };
+
+    updateZoom(); // lấy zoom ban đầu
+    map.on("zoomend", updateZoom);
+
+    return () => {
+      map.off("zoomend", updateZoom);
+    };
+  }, [map, onZoomChange]);
+
+  return null;
+}
+
 function MapController({ mapRef }) {
   const map = useMap();
 
@@ -429,6 +494,7 @@ function MapController({ mapRef }) {
 
   return null;
 }
+
 
 function ModalShell({ children, onClose, maxWidth = 920 }) {
   return (
@@ -1365,6 +1431,7 @@ export default function App() {
   const [members, setMembers] = useState([]);
   const [markers, setMarkers] = useState([]);
   const [reviews, setReviews] = useState([]);
+  const [mapZoom, setMapZoom] = useState(13);
 
   const [placeDraft, setPlaceDraft] = useState(emptyPlaceDraft);
   const [reviewDraft, setReviewDraft] = useState(emptyReviewDraft);
@@ -1731,10 +1798,17 @@ export default function App() {
         max-width: 140px;
       }
 
-      @media (max-width: 900px) {
+      @media (max-width: 980px) {
         .utt-map-scope .utt-place-form-grid,
         .utt-map-scope .utt-review-form-grid {
           grid-template-columns: 1fr !important;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .utt-map-scope .utt-place-form-grid {
+          min-height: auto !important;
+          max-height: 92svh !important;
         }
       }
 
@@ -1994,6 +2068,11 @@ export default function App() {
     const finalLat = coords.lat;
     const finalLng = coords.lng;
 
+    if (coords.error) {
+      showMessage(`❌ ${coords.error}`);
+      return;
+    }
+
     if (finalLat === null || finalLng === null) {
       showMessage("❌ Tọa độ không hợp lệ");
       return;
@@ -2042,7 +2121,7 @@ export default function App() {
       resetPlaceDraft();
     } catch (error) {
       console.error("Save marker error:", error);
-      showMessage("❌ Không lưu được địa điểm");
+      showMessage(`❌ Không lưu được địa điểm: ${error?.message || "Unknown error"}`);
     }
   };
 
@@ -3240,6 +3319,7 @@ export default function App() {
         >
           <MapController mapRef={mapRef} />
           <FixMapSize />
+          <ZoomTracker onZoomChange={setMapZoom} />
 
           <TileLayer
             attribution="&copy; OpenStreetMap contributors"
@@ -3331,7 +3411,7 @@ export default function App() {
               <Marker
                 key={m.id}
                 position={[m.lat, m.lng]}
-                icon={createPlaceIcon(m, selectedMarkerId === m.id)}
+                icon={createPlaceIcon(m, mapZoom, selectedMarkerId === m.id)}
                 eventHandlers={{
                   click: () => setSelectedMarkerId(m.id),
                 }}
@@ -3383,8 +3463,15 @@ export default function App() {
 
       {/* Form thêm / sửa địa điểm */}
       {showPlaceForm && (
-        <ModalShell onClose={resetPlaceDraft} maxWidth={1040}>
-          <div className="utt-place-form-grid" style={{ minHeight: "min(88svh, 760px)" }}>
+        <ModalShell onClose={resetPlaceDraft} maxWidth={1180}>
+          <div
+            className="utt-place-form-grid"
+            style={{
+              minHeight: "min(92svh, 820px)",
+              maxHeight: "92svh",
+              overflow: "hidden",
+            }}
+          >
             <div
               style={{
                 padding: "24px 22px 20px",
@@ -3516,144 +3603,6 @@ export default function App() {
                 />
               </div>
 
-              {canEditMap && (
-                <>
-                  <div
-                    style={{
-                      marginBottom: 18,
-                      padding: 16,
-                      borderRadius: 18,
-                      background: "#f8fafc",
-                      border: "1px solid #e5e7eb",
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: 17,
-                        fontWeight: 800,
-                        color: "#0f172a",
-                        marginBottom: 12,
-                      }}
-                    >
-                      Google Maps & tọa độ chính xác
-                    </div>
-
-                    <div style={{ marginBottom: 14 }}>
-                      <div
-                        style={{
-                          fontWeight: 700,
-                          marginBottom: 8,
-                          color: "#1e293b",
-                        }}
-                      >
-                        Link Google Maps
-                      </div>
-
-                      <input
-                        placeholder="https://maps.google.com/..."
-                        value={placeDraft.googleMapsLink}
-                        onChange={(e) =>
-                          setPlaceDraft((prev) => ({
-                            ...prev,
-                            googleMapsLink: e.target.value,
-                          }))
-                        }
-                        style={{
-                          width: "100%",
-                          padding: "14px 16px",
-                          borderRadius: 14,
-                          border: "1px solid #cbd5e1",
-                          fontSize: 15,
-                          outline: "none",
-                        }}
-                      />
-                    </div>
-
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "1fr 1fr",
-                        gap: 12,
-                      }}
-                    >
-                      <div>
-                        <div
-                          style={{
-                            fontWeight: 700,
-                            marginBottom: 8,
-                            color: "#1e293b",
-                          }}
-                        >
-                          exactLat
-                        </div>
-
-                        <input
-                          placeholder="Ví dụ: 21.292547"
-                          value={placeDraft.exactLat}
-                          onChange={(e) =>
-                            setPlaceDraft((prev) => ({
-                              ...prev,
-                              exactLat: e.target.value,
-                            }))
-                          }
-                          style={{
-                            width: "100%",
-                            padding: "14px 16px",
-                            borderRadius: 14,
-                            border: "1px solid #cbd5e1",
-                            fontSize: 15,
-                            outline: "none",
-                          }}
-                        />
-                      </div>
-
-                      <div>
-                        <div
-                          style={{
-                            fontWeight: 700,
-                            marginBottom: 8,
-                            color: "#1e293b",
-                          }}
-                        >
-                          exactLng
-                        </div>
-
-                        <input
-                          placeholder="Ví dụ: 105.584216"
-                          value={placeDraft.exactLng}
-                          onChange={(e) =>
-                            setPlaceDraft((prev) => ({
-                              ...prev,
-                              exactLng: e.target.value,
-                            }))
-                          }
-                          style={{
-                            width: "100%",
-                            padding: "14px 16px",
-                            borderRadius: 14,
-                            border: "1px solid #cbd5e1",
-                            fontSize: 15,
-                            outline: "none",
-                          }}
-                        />
-                      </div>
-                    </div>
-
-                    <div
-                      style={{
-                        marginTop: 10,
-                        fontSize: 13,
-                        color: "#64748b",
-                        lineHeight: 1.6,
-                      }}
-                    >
-                      Nếu nhập <strong>exactLat</strong> và <strong>exactLng</strong>{" "}
-                      hợp lệ, marker sẽ tự dùng tọa độ chính xác đó thay cho tọa độ click
-                      ban đầu.
-                    </div>
-                  </div>
-                </>
-              )}
 
               <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
                 <button
@@ -3696,7 +3645,9 @@ export default function App() {
               style={{
                 padding: "24px 20px 20px",
                 overflowY: "auto",
+                overflowX: "hidden",
                 background: "#f8fafc",
+                minWidth: 0,
               }}
             >
               <div
@@ -3809,6 +3760,91 @@ export default function App() {
                   </div>
                   <div style={{ fontSize: 14 }}>
                     Hãy thêm ảnh hoặc video để địa điểm sinh động hơn.
+                  </div>
+                </div>
+              )}
+
+              {canEditMap && (
+                <div
+                  style={{
+                    marginTop: 18,
+                    padding: 16,
+                    borderRadius: 18,
+                    background: "#ffffff",
+                    border: "1px solid #e5e7eb",
+                    boxShadow: "0 6px 18px rgba(15,23,42,0.06)",
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 17,
+                      fontWeight: 800,
+                      color: "#0f172a",
+                      marginBottom: 12,
+                    }}
+                  >
+                    Google Maps & tọa độ chính xác
+                  </div>
+
+                  <input
+                    placeholder="Link Google Maps"
+                    value={placeDraft.googleMapsLink}
+                    onChange={(e) =>
+                      setPlaceDraft((prev) => ({
+                        ...prev,
+                        googleMapsLink: e.target.value,
+                      }))
+                    }
+                    style={{
+                      width: "100%",
+                      padding: "12px",
+                      borderRadius: 12,
+                      border: "1px solid #ccc",
+                      marginBottom: 10,
+                    }}
+                  />
+
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 10,
+                    }}
+                  >
+                    <input
+                      placeholder="exactLat"
+                      value={placeDraft.exactLat}
+                      onChange={(e) =>
+                        setPlaceDraft((prev) => ({
+                          ...prev,
+                          exactLat: e.target.value,
+                        }))
+                      }
+                      style={{
+                        width: "100%",
+                        minWidth: 0,
+                        padding: "12px",
+                        borderRadius: 12,
+                        border: "1px solid #ccc",
+                        outline: "none",
+                      }}
+                    />
+
+                    <input
+                      placeholder="exactLng"
+                      value={placeDraft.exactLng}
+                      onChange={(e) =>
+                        setPlaceDraft((prev) => ({
+                          ...prev,
+                          exactLng: e.target.value,
+                        }))
+                      }
+                      style={{ flex: 1, padding: "12px", borderRadius: 12 }}
+                    />
+                  </div>
+
+                  <div style={{ fontSize: 12, color: "#64748b", marginTop: 8 }}>
+                    Nếu nhập tọa độ chuẩn → marker sẽ nhảy đúng vị trí
                   </div>
                 </div>
               )}
