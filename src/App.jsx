@@ -1521,6 +1521,7 @@ export default function App() {
 
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [activeTab, setActiveTab] = useState("places");
+  const [memberView, setMemberView] = useState("elevated");
   const [members, setMembers] = useState([]);
   const [markers, setMarkers] = useState([]);
   const [reviews, setReviews] = useState([]);
@@ -1653,6 +1654,10 @@ export default function App() {
       (u) => !u.role || u.role === "user"
     );
   }, [filteredMembers]);
+
+  const displayedMembers = useMemo(() => {
+    return memberView === "elevated" ? elevatedMembers : normalMembers;
+  }, [memberView, elevatedMembers, normalMembers]);
 
   const totalStats = useMemo(() => {
     const ratedMarkers = markers.filter(
@@ -2994,15 +2999,16 @@ export default function App() {
                 gap: 12,
               }}
             >
-              <div
-                style={{
-                  fontSize: 26,
-                  fontWeight: 800,
-                  color: "#1e293b",
-                }}
-              >
-                {activeTab === "members" ? "Quản lý thành viên" : "Danh sách địa điểm"}
-              </div>
+              <div>
+                <div
+                  style={{
+                    fontSize: 26,
+                    fontWeight: 800,
+                    color: "#1e293b",
+                  }}
+                >
+                  {activeTab === "members" ? "Quản lý thành viên" : "Danh sách địa điểm"}
+                </div>
 
                 <div style={{ color: "#64748b", fontSize: 14 }}>
                   {activeTab === "members"
@@ -3057,7 +3063,10 @@ export default function App() {
 
                 {isAdmin && (
                   <button
-                    onClick={() => setActiveTab("members")}
+                    onClick={() => {
+                      setActiveTab("members");
+                      setMemberView("elevated");
+                    }}
                     style={{
                       padding: "10px 14px",
                       borderRadius: 999,
@@ -3156,104 +3165,61 @@ export default function App() {
                 </>
               )}
 
-              {activeTab === "members" ? (
-                !isAdmin ? (
-                  <p style={{ textAlign: "center", color: "#64748b", padding: 30 }}>
-                    Bạn không có quyền truy cập mục này
-                  </p>
-                ) : filteredMembers.length === 0 ? (
-                  <p style={{ textAlign: "center", color: "#64748b", padding: 30 }}>
-                    Không tìm thấy thành viên phù hợp
-                  </p>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-                    <div>
-                      <div
-                        style={{
-                          marginBottom: 12,
-                          fontSize: 18,
-                          fontWeight: 800,
-                          color: "#0f172a",
-                        }}
-                      >
-                        Quản trị viên
-                      </div>
+              {activeTab === "members" && isAdmin && (
+                <>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      type="button"
+                      onClick={() => setMemberView("elevated")}
+                      style={{
+                        flex: 1,
+                        padding: "12px 14px",
+                        borderRadius: 14,
+                        border:
+                          memberView === "elevated" ? "none" : "1px solid #cbd5e1",
+                        background: memberView === "elevated" ? "#2563eb" : "#fff",
+                        color: memberView === "elevated" ? "#fff" : "#334155",
+                        cursor: "pointer",
+                        fontWeight: 800,
+                        fontSize: 14,
+                      }}
+                    >
+                      Quản trị viên ({elevatedMembers.length})
+                    </button>
 
-                      <div style={{ marginBottom: 10, fontSize: 13, color: "#64748b" }}>
-                        Hiển thị những người đã được nâng cấp quyền hạn
-                      </div>
-
-                      {elevatedMembers.length === 0 ? (
-                        <div
-                          style={{
-                            padding: 16,
-                            border: "1px dashed #cbd5e1",
-                            borderRadius: 16,
-                            background: "#f8fafc",
-                            color: "#64748b",
-                          }}
-                        >
-                          Chưa có ai được nâng quyền
-                        </div>
-                      ) : (
-                        elevatedMembers.map((u) => (
-                          <MemberCard
-                            key={u.id}
-                            user={u}
-                            onPromote={setModerator}
-                            onDemote={removeModerator}
-                          />
-                        ))
-                      )}
-                    </div>
-
-                    <div>
-                      <div
-                        style={{
-                          marginBottom: 12,
-                          fontSize: 18,
-                          fontWeight: 800,
-                          color: "#0f172a",
-                        }}
-                      >
-                        User
-                      </div>
-
-                      <div style={{ marginBottom: 10, fontSize: 13, color: "#64748b" }}>
-                        Hiển thị các tài khoản user chưa được nâng cấp quyền hạn
-                      </div>
-
-                      {normalMembers.length === 0 ? (
-                        <div
-                          style={{
-                            padding: 16,
-                            border: "1px dashed #cbd5e1",
-                            borderRadius: 16,
-                            background: "#f8fafc",
-                            color: "#64748b",
-                          }}
-                        >
-                          Không còn user nào trong danh sách này
-                        </div>
-                      ) : (
-                        normalMembers.map((u) => (
-                          <MemberCard
-                            key={u.id}
-                            user={u}
-                            onPromote={setModerator}
-                            onDemote={removeModerator}
-                          />
-                        ))
-                      )}
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setMemberView("user")}
+                      style={{
+                        flex: 1,
+                        padding: "12px 14px",
+                        borderRadius: 14,
+                        border: memberView === "user" ? "none" : "1px solid #cbd5e1",
+                        background: memberView === "user" ? "#2563eb" : "#fff",
+                        color: memberView === "user" ? "#fff" : "#334155",
+                        cursor: "pointer",
+                        fontWeight: 800,
+                        fontSize: 14,
+                      }}
+                    >
+                      User ({normalMembers.length})
+                    </button>
                   </div>
-                )
-              ) : filteredMarkers.length === 0 ? (
-                ...
-              ) : (
-                ...
-              )}
 
+                  <input
+                    type="text"
+                    placeholder="🔎 Tìm theo username hoặc email..."
+                    value={memberSearchTerm}
+                    onChange={(e) => setMemberSearchTerm(e.target.value)}
+                    style={{
+                      padding: 14,
+                      borderRadius: 14,
+                      border: "1px solid #cbd5e1",
+                      fontSize: 15,
+                    }}
+                  />
+                </>
+              )}
             </div>
 
             <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
@@ -3262,306 +3228,269 @@ export default function App() {
                   <p style={{ textAlign: "center", color: "#64748b", padding: 30 }}>
                     Bạn không có quyền truy cập mục này
                   </p>
-                ) : members.length === 0 ? (
-                  <p style={{ textAlign: "center", color: "#64748b", padding: 30 }}>
-                    Chưa có thành viên nào
-                  </p>
+                ) : displayedMembers.length === 0 ? (
+                  <div
+                    style={{
+                      padding: 16,
+                      border: "1px dashed #cbd5e1",
+                      borderRadius: 16,
+                      background: "#f8fafc",
+                      color: "#64748b",
+                      textAlign: "center",
+                    }}
+                  >
+                    {memberView === "elevated"
+                      ? "Không có tài khoản nào trong mục Quản trị viên"
+                      : "Không có tài khoản nào trong mục User"}
+                  </div>
                 ) : (
-                  members.map((u) => (
+                  <div>
                     <div
-                      key={u.id}
                       style={{
-                        padding: 16,
                         marginBottom: 12,
-                        border: "1px solid #e5e7eb",
-                        borderRadius: 18,
-                        background: "#fff",
+                        fontSize: 18,
+                        fontWeight: 800,
+                        color: "#0f172a",
                       }}
                     >
-                      <div
-                        style={{
-                          fontWeight: 800,
-                          fontSize: 16,
-                          color: "#0f172a",
-                        }}
-                      >
-                        {u.username || "Chưa có username"}
-                      </div>
-
-                      <div
-                        style={{ marginTop: 4, fontSize: 13, color: "#64748b" }}
-                      >
-                        {u.email || "Không có email"}
-                      </div>
-
-                      <div
-                        style={{ marginTop: 6, fontSize: 13, color: "#475569" }}
-                      >
-                        Vai trò hiện tại: <strong>{u.role || "user"}</strong>
-                      </div>
-
-                      <div
-                        style={{
-                          marginTop: 12,
-                          display: "flex",
-                          gap: 8,
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        {u.role !== "admin" && (
-                          <>
-                            <button
-                              onClick={() => setModerator(u.id)}
-                              style={{
-                                padding: "10px 12px",
-                                background: "#2563eb",
-                                color: "#fff",
-                                border: "none",
-                                borderRadius: 10,
-                                cursor: "pointer",
-                                fontWeight: 700,
-                              }}
-                            >
-                              Cấp Moderator
-                            </button>
-
-                            <button
-                              onClick={() => removeModerator(u.id)}
-                              style={{
-                                padding: "10px 12px",
-                                background: "#f59e0b",
-                                color: "#fff",
-                                border: "none",
-                                borderRadius: 10,
-                                cursor: "pointer",
-                                fontWeight: 700,
-                              }}
-                            >
-                              Hạ về User
-                            </button>
-                          </>
-                        )}
-                      </div>
+                      {memberView === "elevated" ? "Quản trị viên" : "User"}
                     </div>
-                  ))
+
+                    <div style={{ marginBottom: 10, fontSize: 13, color: "#64748b" }}>
+                      {memberView === "elevated"
+                        ? "Hiển thị danh sách những người bạn đã nâng cấp quyền hạn"
+                        : "Hiển thị danh sách user bình thường"}
+                    </div>
+
+                    {displayedMembers.map((u) => (
+                      <MemberCard
+                        key={u.id}
+                        user={u}
+                        onPromote={setModerator}
+                        onDemote={removeModerator}
+                      />
+                    ))}
+                  </div>
                 )
               ) : filteredMarkers.length === 0 ? (
                 <p style={{ textAlign: "center", color: "#64748b", padding: 30 }}>
                   Không tìm thấy địa điểm nào
                 </p>
               ) : (
-                filteredMarkers.map((m) => {
-                  const stats = markerStatsMap[m.id] || {
-                    reviewCount: 0,
-                    averageRating: 0,
-                  };
+                <>
+                  {filteredMarkers.map((m) => {
+                    const stats = markerStatsMap[m.id] || {
+                      reviewCount: 0,
+                      averageRating: 0,
+                    };
 
-                  return (
-                    <div
-                      key={m.id}
-                      style={{
-                        padding: 16,
-                        marginBottom: 12,
-                        border: "1px solid #e5e7eb",
-                        borderRadius: 18,
-                        background: selectedMarkerId === m.id ? "#eff6ff" : "#fff",
-                        boxShadow:
-                          selectedMarkerId === m.id
-                            ? "0 6px 20px rgba(37,99,235,0.08)"
-                            : "none",
-                      }}
-                    >
+                    return (
                       <div
+                        key={m.id}
                         style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          gap: 10,
+                          padding: 16,
+                          marginBottom: 12,
+                          border: "1px solid #e5e7eb",
+                          borderRadius: 18,
+                          background: selectedMarkerId === m.id ? "#eff6ff" : "#fff",
+                          boxShadow:
+                            selectedMarkerId === m.id
+                              ? "0 6px 20px rgba(37,99,235,0.08)"
+                              : "none",
                         }}
                       >
-                        <strong
-                          style={{
-                            color: "#0f172a",
-                            fontSize: 16,
-                            textAlign: "left",
-                          }}
-                        >
-                          {m.name}
-                        </strong>
-
-                        <span style={{ fontSize: 22 }}>{getCategoryEmoji(m.category)}</span>
-                      </div>
-
-                      <div
-                        style={{
-                          marginTop: 6,
-                          fontSize: 13,
-                          color: "#64748b",
-                          textAlign: "left",
-                        }}
-                      >
-                        {getCategoryLabel(m.category)}
-                      </div>
-
-                      <div
-                        style={{
-                          color: "#f59e0b",
-                          fontSize: 18,
-                          margin: "8px 0 0",
-                          textAlign: "left",
-                        }}
-                      >
-                        {renderStars(Math.round(stats.averageRating || 0))}
-                      </div>
-
-                      <div
-                        style={{
-                          marginTop: 4,
-                          fontSize: 13,
-                          color: "#64748b",
-                          textAlign: "left",
-                        }}
-                      >
-                        {(stats.averageRating || 0).toFixed(1)}/5 • {stats.reviewCount} đánh giá
-                      </div>
-
-                      {m.note && (
-                        <p
-                          style={{
-                            color: "#475569",
-                            marginTop: 8,
-                            lineHeight: 1.5,
-                            textAlign: "left",
-                          }}
-                        >
-                          {m.note}
-                        </p>
-                      )}
-
-                      {m.media?.length > 0 && (
                         <div
                           style={{
-                            marginTop: 10,
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 10,
+                          }}
+                        >
+                          <strong
+                            style={{
+                              color: "#0f172a",
+                              fontSize: 16,
+                              textAlign: "left",
+                            }}
+                          >
+                            {m.name}
+                          </strong>
+
+                          <span style={{ fontSize: 22 }}>{getCategoryEmoji(m.category)}</span>
+                        </div>
+
+                        <div
+                          style={{
+                            marginTop: 6,
+                            fontSize: 13,
+                            color: "#64748b",
+                            textAlign: "left",
+                          }}
+                        >
+                          {getCategoryLabel(m.category)}
+                        </div>
+
+                        <div
+                          style={{
+                            color: "#f59e0b",
+                            fontSize: 18,
+                            margin: "8px 0 0",
+                            textAlign: "left",
+                          }}
+                        >
+                          {renderStars(Math.round(stats.averageRating || 0))}
+                        </div>
+
+                        <div
+                          style={{
+                            marginTop: 4,
+                            fontSize: 13,
+                            color: "#64748b",
+                            textAlign: "left",
+                          }}
+                        >
+                          {(stats.averageRating || 0).toFixed(1)}/5 • {stats.reviewCount} đánh giá
+                        </div>
+
+                        {m.note && (
+                          <p
+                            style={{
+                              color: "#475569",
+                              marginTop: 8,
+                              lineHeight: 1.5,
+                              textAlign: "left",
+                            }}
+                          >
+                            {m.note}
+                          </p>
+                        )}
+
+                        {m.media?.length > 0 && (
+                          <div
+                            style={{
+                              marginTop: 10,
+                              display: "flex",
+                              gap: 8,
+                              overflowX: "auto",
+                              paddingBottom: 4,
+                            }}
+                          >
+                            {m.media.slice(0, 4).map((item) =>
+                              item.type === "image" ? (
+                                <img
+                                  key={item.id}
+                                  src={item.url}
+                                  alt="media"
+                                  style={{
+                                    width: 62,
+                                    height: 62,
+                                    objectFit: "cover",
+                                    borderRadius: 10,
+                                    border: "1px solid #e5e7eb",
+                                    flex: "0 0 auto",
+                                  }}
+                                />
+                              ) : (
+                                <video
+                                  key={item.id}
+                                  src={item.url}
+                                  style={{
+                                    width: 88,
+                                    height: 62,
+                                    objectFit: "cover",
+                                    borderRadius: 10,
+                                    border: "1px solid #e5e7eb",
+                                    flex: "0 0 auto",
+                                  }}
+                                />
+                              )
+                            )}
+                          </div>
+                        )}
+
+                        <div
+                          style={{
+                            marginTop: 14,
                             display: "flex",
                             gap: 8,
-                            overflowX: "auto",
-                            paddingBottom: 4,
+                            flexWrap: "wrap",
                           }}
                         >
-                          {m.media.slice(0, 4).map((item) =>
-                            item.type === "image" ? (
-                              <img
-                                key={item.id}
-                                src={item.url}
-                                alt="media"
+                          <button
+                            onClick={() => focusMarker(m)}
+                            style={{
+                              flex: 1,
+                              padding: 10,
+                              background: "#0ea5e9",
+                              color: "#fff",
+                              border: "none",
+                              borderRadius: 10,
+                              cursor: "pointer",
+                              fontWeight: 700,
+                            }}
+                          >
+                            Xem
+                          </button>
+
+                          <button
+                            onClick={() => openReviewsViewer(m.id)}
+                            style={{
+                              flex: 1,
+                              padding: 10,
+                              background: "#f8fafc",
+                              color: "#334155",
+                              border: "1px solid #cbd5e1",
+                              borderRadius: 10,
+                              cursor: "pointer",
+                              fontWeight: 700,
+                            }}
+                          >
+                            Review
+                          </button>
+
+                          {canEditMap && (
+                            <>
+                              <button
+                                onClick={() => startEdit(m)}
                                 style={{
-                                  width: 62,
-                                  height: 62,
-                                  objectFit: "cover",
+                                  flex: 1,
+                                  padding: 10,
+                                  background: "#eab308",
+                                  color: "#fff",
+                                  border: "none",
                                   borderRadius: 10,
-                                  border: "1px solid #e5e7eb",
-                                  flex: "0 0 auto",
+                                  cursor: "pointer",
+                                  fontWeight: 700,
                                 }}
-                              />
-                            ) : (
-                              <video
-                                key={item.id}
-                                src={item.url}
+                              >
+                                Sửa
+                              </button>
+
+                              <button
+                                onClick={() => deleteMarker(m.id)}
                                 style={{
-                                  width: 88,
-                                  height: 62,
-                                  objectFit: "cover",
+                                  flex: 1,
+                                  padding: 10,
+                                  background: "#fee2e2",
+                                  color: "#ef4444",
+                                  border: "none",
                                   borderRadius: 10,
-                                  border: "1px solid #e5e7eb",
-                                  flex: "0 0 auto",
+                                  cursor: "pointer",
+                                  fontWeight: 700,
                                 }}
-                              />
-                            )
+                              >
+                                Xóa
+                              </button>
+                            </>
                           )}
                         </div>
-                      )}
-
-                      <div
-                        style={{
-                          marginTop: 14,
-                          display: "flex",
-                          gap: 8,
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        <button
-                          onClick={() => focusMarker(m)}
-                          style={{
-                            flex: 1,
-                            padding: 10,
-                            background: "#0ea5e9",
-                            color: "#fff",
-                            border: "none",
-                            borderRadius: 10,
-                            cursor: "pointer",
-                            fontWeight: 700,
-                          }}
-                        >
-                          Xem
-                        </button>
-
-                        <button
-                          onClick={() => openReviewsViewer(m.id)}
-                          style={{
-                            flex: 1,
-                            padding: 10,
-                            background: "#f8fafc",
-                            color: "#334155",
-                            border: "1px solid #cbd5e1",
-                            borderRadius: 10,
-                            cursor: "pointer",
-                            fontWeight: 700,
-                          }}
-                        >
-                          Review
-                        </button>
-
-                        {canEditMap && (
-                          <>
-                            <button
-                              onClick={() => startEdit(m)}
-                              style={{
-                                flex: 1,
-                                padding: 10,
-                                background: "#eab308",
-                                color: "#fff",
-                                border: "none",
-                                borderRadius: 10,
-                                cursor: "pointer",
-                                fontWeight: 700,
-                              }}
-                            >
-                              Sửa
-                            </button>
-
-                            <button
-                              onClick={() => deleteMarker(m.id)}
-                              style={{
-                                flex: 1,
-                                padding: 10,
-                                background: "#fee2e2",
-                                color: "#ef4444",
-                                border: "none",
-                                borderRadius: 10,
-                                cursor: "pointer",
-                                fontWeight: 700,
-                              }}
-                            >
-                              Xóa
-                            </button>
-                          </>
-                        )}
                       </div>
-                    </div>
-                  );
-                })
+                    );
+                  })}
+                </>
               )}
-            </div>
+              </div>
           </div>
         </>
       )}
