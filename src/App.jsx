@@ -2516,7 +2516,9 @@ export default function App() {
         userEmail: firebaseUser?.email || "",
         rating: Number(reviewDraft.rating),
         content: reviewDraft.content.trim(),
-        media: normalizeMediaArray(reviewDraft.media, "review-save"),
+        media: (reviewDraft.media || []).filter(
+          (item) => item.url && !item.url.startsWith("data:")
+        ),
         updatedAt: serverTimestamp(),
       };
 
