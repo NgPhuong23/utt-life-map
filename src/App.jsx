@@ -2165,7 +2165,7 @@ export default function App() {
     }));
   };
 
-  const MAX_REVIEW_MEDIA = 12;
+  const MAX_REVIEW_MEDIA = 10;
   const MAX_VIDEO_MB = 15;
 
   const uploadReviewFileToStorage = async (file) => {
@@ -2483,7 +2483,8 @@ export default function App() {
       markerId,
       rating: existing?.rating || 0,
       content: existing?.content || "",
-      media: normalizeMediaArray(existing?.media || [], `review-draft-${markerId}`),
+      media: normalizeMediaArray(existing?.media || [], `review-draft-${markerId}`)
+        .filter((item) => item?.url && !String(item.url).startsWith("data:")),
     });
     setShowReviewEditor(true);
   };
