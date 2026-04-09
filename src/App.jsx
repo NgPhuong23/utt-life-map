@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Circle,
+  CircleMarker,
   MapContainer,
   Marker,
   Popup,
@@ -271,14 +272,56 @@ function normalizeMediaArray(arr, prefix = "media") {
   return arr.map((item) => normalizeMediaItem(item, prefix)).filter(Boolean);
 }
 
-async function fileToBase64Media(file) {
-  const type = file.type.startsWith("video/") ? "video" : "image";
-  const url = await new Promise((resolve, reject) => {
+async function compressImageToDataUrl(file, maxSide = 1600, quality = 0.78) {
+  const originalDataUrl = await new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result || ""));
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+
+  const image = await new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = originalDataUrl;
+  });
+
+  const canvas = document.createElement("canvas");
+  let { width, height } = image;
+
+  if (width > height && width > maxSide) {
+    height = Math.round((height * maxSide) / width);
+    width = maxSide;
+  } else if (height >= width && height > maxSide) {
+    width = Math.round((width * maxSide) / height);
+    height = maxSide;
+  }
+
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(image, 0, 0, width, height);
+
+  return canvas.toDataURL("image/jpeg", quality);
+}
+
+async function fileToBase64Media(file) {
+  const type = file.type.startsWith("video/") ? "video" : "image";
+
+  let url = "";
+
+  if (type === "image") {
+    url = await compressImageToDataUrl(file, 1600, 0.78);
+  } else {
+    url = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
 
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -653,7 +696,7 @@ function StarRatingInput({ value, onChange, size = 34, center = true }) {
   );
 }
 
-function ReviewCard({ review }) {
+function ReviewCard({ review, canDelete = false, onDelete }) {
   const avatar = review.userAvatar || "";
   const username = review.username || review.userEmail || "Người dùng";
 
@@ -777,9 +820,31 @@ function ReviewCard({ review }) {
           ))}
         </div>
       )}
+
+      {canDelete && (
+        <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
+          <button
+            type="button"
+            onClick={() => onDelete?.(review.id)}
+            style={{
+              padding: "10px 12px",
+              background: "#fee2e2",
+              color: "#dc2626",
+              border: "none",
+              borderRadius: 10,
+              cursor: "pointer",
+              fontWeight: 700,
+            }}
+          >
+            Xóa đánh giá
+          </button>
+        </div>
+      )}
+
     </div>
   );
 }
+
 
 function ReviewEditorModal({
   marker,
@@ -1031,6 +1096,9 @@ function ReviewsViewerModal({
   onWriteReview,
   isLoggedIn,
   myReview,
+  currentUserId,
+  canManageReviews,
+  onDeleteReview,
 }) {
   return (
     <ModalShell onClose={onClose} maxWidth={980}>
@@ -1152,12 +1220,23 @@ function ReviewsViewerModal({
                 gap: 14,
               }}
             >
-              {reviews.map((review) => (
-                <ReviewCard key={review.id} review={review} />
-              ))}
+              {reviews.map((review) => {
+                const canDeleteThisReview =
+                  review.userId === currentUserId || canManageReviews;
+
+                return (
+                  <ReviewCard
+                    key={review.id}
+                    review={review}
+                    canDelete={canDeleteThisReview}
+                    onDelete={onDeleteReview}
+                  />
+                );
+              })}
             </div>
           )}
         </div>
+
       </div>
     </ModalShell>
   );
@@ -1546,6 +1625,7 @@ export default function App() {
   const [showReviewsViewer, setShowReviewsViewer] = useState(false);
   const [activeReviewMarkerId, setActiveReviewMarkerId] = useState(null);
   const [reviewSaving, setReviewSaving] = useState(false);
+  const [userLocation, setUserLocation] = useState(null);
 
   const [searchTerm, setSearchTerm] = useState("");
   const [memberSearchTerm, setMemberSearchTerm] = useState("");
@@ -2080,6 +2160,9 @@ export default function App() {
     }));
   };
 
+  const MAX_REVIEW_MEDIA = 12;
+  const MAX_VIDEO_MB = 15;
+
   const handleReviewMediaUpload = async (e) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
@@ -2094,8 +2177,28 @@ export default function App() {
       return;
     }
 
+    const oversizedVideo = validFiles.find(
+      (file) => file.type.startsWith("video/") && file.size > MAX_VIDEO_MB * 1024 * 1024
+    );
+
+    if (oversizedVideo) {
+      showMessage(`❌ Video quá lớn. Chỉ nhận video dưới ${MAX_VIDEO_MB}MB`);
+      if (reviewMediaInputRef.current) reviewMediaInputRef.current.value = "";
+      return;
+    }
+
+    const remainingSlots = MAX_REVIEW_MEDIA - (reviewDraft.media?.length || 0);
+
+    if (remainingSlots <= 0) {
+      showMessage(`❌ Mỗi review tối đa ${MAX_REVIEW_MEDIA} media`);
+      if (reviewMediaInputRef.current) reviewMediaInputRef.current.value = "";
+      return;
+    }
+
+    const filesToUpload = validFiles.slice(0, remainingSlots);
+
     try {
-      const uploadedMedia = await Promise.all(validFiles.map(fileToBase64Media));
+      const uploadedMedia = await Promise.all(filesToUpload.map(fileToBase64Media));
 
       setReviewDraft((prev) => ({
         ...prev,
@@ -2103,7 +2206,14 @@ export default function App() {
       }));
 
       if (reviewMediaInputRef.current) reviewMediaInputRef.current.value = "";
-      showMessage(`✅ Đã thêm ${uploadedMedia.length} media review`);
+
+      if (validFiles.length > remainingSlots) {
+        showMessage(
+          `✅ Đã thêm ${uploadedMedia.length} media. Tối đa ${MAX_REVIEW_MEDIA} media mỗi review`
+        );
+      } else {
+        showMessage(`✅ Đã thêm ${uploadedMedia.length} media review`);
+      }
     } catch (error) {
       console.error("Review media upload error:", error);
       showMessage("❌ Không xử lý được media review");
@@ -2388,6 +2498,34 @@ export default function App() {
     }
   };
 
+  const deleteReview = async (reviewId) => {
+    if (!requireLogin()) return;
+
+    const targetReview = reviews.find((r) => r.id === reviewId);
+    if (!targetReview) {
+      showMessage("❌ Không tìm thấy đánh giá");
+      return;
+    }
+
+    const canDeleteThisReview =
+      targetReview.userId === firebaseUser?.uid || isAdmin || role === "moderator";
+
+    if (!canDeleteThisReview) {
+      showMessage("❌ Bạn không có quyền xóa đánh giá này");
+      return;
+    }
+
+    if (!window.confirm("Bạn có chắc muốn xóa đánh giá này không?")) return;
+
+    try {
+      await deleteDoc(doc(db, "reviews", reviewId));
+      showMessage("🗑️ Đã xóa đánh giá");
+    } catch (error) {
+      console.error("Delete review error:", error);
+      showMessage("❌ Xóa đánh giá thất bại");
+    }
+  };
+
   const focusMarker = (marker) => {
     setSelectedMarkerId(marker.id);
     setShowMenu(false);
@@ -2476,10 +2614,16 @@ export default function App() {
 
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const { latitude, longitude } = pos.coords;
+        const { latitude, longitude, accuracy } = pos.coords;
+
+        setUserLocation({
+          lat: latitude,
+          lng: longitude,
+          accuracy: Number.isFinite(accuracy) ? accuracy : 25,
+        });
 
         if (mapRef.current) {
-          mapRef.current.flyTo([latitude, longitude], 16, { duration: 1.2 });
+          mapRef.current.flyTo([latitude, longitude], 17, { duration: 1.2 });
         }
 
         showMessage(
@@ -2487,7 +2631,7 @@ export default function App() {
         );
       },
       () => showMessage("❌ Không lấy được vị trí"),
-      { enableHighAccuracy: true, timeout: 12000 }
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
     );
   };
 
@@ -3527,6 +3671,32 @@ export default function App() {
               fillOpacity: 0.08,
             }}
           />
+          
+          {userLocation && (
+            <>
+              <Circle
+                center={[userLocation.lat, userLocation.lng]}
+                radius={Math.max(userLocation.accuracy || 20, 12)}
+                pathOptions={{
+                  color: "#60a5fa",
+                  fillColor: "#93c5fd",
+                  fillOpacity: 0.18,
+                  weight: 1.5,
+                }}
+              />
+
+              <CircleMarker
+                center={[userLocation.lat, userLocation.lng]}
+                radius={8}
+                pathOptions={{
+                  color: "#ffffff",
+                  weight: 3,
+                  fillColor: "#2563eb",
+                  fillOpacity: 1,
+                }}
+              />
+            </>
+          )}
 
           <MapClickHandler onMapPointClick={handleMapPointClick} />
           <FlyToMarker target={selectedMarker} />
@@ -4073,6 +4243,9 @@ export default function App() {
           }}
           isLoggedIn={isLoggedIn}
           myReview={myActiveReview}
+          currentUserId={firebaseUser?.uid || null}
+          canManageReviews={isAdmin || role === "moderator"}
+          onDeleteReview={deleteReview}
         />
       )}
 
