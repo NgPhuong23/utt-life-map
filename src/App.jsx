@@ -24,7 +24,12 @@ import {
   updateDoc,
   writeBatch,
 } from "firebase/firestore";
-import { db } from "./firebase";
+import { db, storage } from "./firebase";
+import {
+  ref,
+  uploadBytes,
+  getDownloadURL,
+} from "firebase/storage";
 import { useAuthCtx } from "./context/AuthContext";
 import AuthModal from "./components/AuthModal";
 import UsernameModal from "./components/UsernameModal";
@@ -2163,9 +2168,45 @@ export default function App() {
   const MAX_REVIEW_MEDIA = 12;
   const MAX_VIDEO_MB = 15;
 
+  const uploadReviewFileToStorage = async (file) => {
+    const type = file.type.startsWith("video/") ? "video" : "image";
+    const ext = file.name?.split(".").pop() || (type === "video" ? "mp4" : "jpg");
+
+    const safeName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+    const storageRef = ref(
+      storage,
+      `reviews/${firebaseUser.uid}/${activeReviewMarkerId}/${safeName}`
+    );
+
+    let uploadFile = file;
+
+    if (type === "image") {
+      const compressedDataUrl = await compressImageToDataUrl(file, 1280, 0.72);
+      const blob = await fetch(compressedDataUrl).then((r) => r.blob());
+      uploadFile = new File([blob], safeName, { type: "image/jpeg" });
+    }
+
+    await uploadBytes(storageRef, uploadFile);
+    const url = await getDownloadURL(storageRef);
+
+    return {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      type,
+      url,
+      name: file.name || safeName,
+    };
+  };
+
   const handleReviewMediaUpload = async (e) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
+
+    if (!requireLogin()) return;
+    if (!activeReviewMarkerId) {
+      showMessage("❌ Không xác định được địa điểm review");
+      if (reviewMediaInputRef.current) reviewMediaInputRef.current.value = "";
+      return;
+    }
 
     const validFiles = files.filter(
       (file) =>
@@ -2198,7 +2239,10 @@ export default function App() {
     const filesToUpload = validFiles.slice(0, remainingSlots);
 
     try {
-      const uploadedMedia = await Promise.all(filesToUpload.map(fileToBase64Media));
+      showMessage("⏳ Đang tải media review...");
+      const uploadedMedia = await Promise.all(
+        filesToUpload.map(uploadReviewFileToStorage)
+      );
 
       setReviewDraft((prev) => ({
         ...prev,
@@ -2216,7 +2260,7 @@ export default function App() {
       }
     } catch (error) {
       console.error("Review media upload error:", error);
-      showMessage("❌ Không xử lý được media review");
+      showMessage("❌ Upload media review thất bại");
     }
   };
 
